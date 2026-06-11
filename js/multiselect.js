@@ -25,6 +25,8 @@ export class MultiSelect {
     this.addBtn.textContent = '+';
     this.addBtn.title = 'Add material';
     this.addBtn.onclick = (e) => { e.stopPropagation(); this._toggle(); };
+    // Clicking the control's empty space (not a chip) opens the picker too.
+    this.control.addEventListener('click', (e) => { if (e.target === this.control) this._open(); });
     this.control.appendChild(this.addBtn);
 
     this.popup = document.createElement('div');
@@ -81,9 +83,16 @@ export class MultiSelect {
     }
   }
 
+  _open() {
+    if (this.disabled || !this.popup.hidden) return;
+    this.popup.hidden = false;
+    this.search.value = '';
+    this._renderList();
+    this.search.focus();
+  }
   _toggle() {
     if (this.disabled) return;
-    if (this.popup.hidden) { this.popup.hidden = false; this.search.value = ''; this._renderList(); this.search.focus(); }
+    if (this.popup.hidden) this._open();
     else this._close();
   }
   _close() { this.popup.hidden = true; }

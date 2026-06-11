@@ -116,20 +116,33 @@ main {
 .record-bar { display: flex; align-items: flex-start; gap: 12px; flex-wrap: wrap; }
 .field { display: flex; flex-direction: column; gap: 5px; }
 .field > label { font-size: 11px; text-transform: uppercase; letter-spacing: .6px; color: var(--muted); }
-.field > input {
+.field > input, .stepper input {
   background: var(--panel-2); border: 1px solid var(--border); border-radius: 8px;
-  color: var(--text); padding: 9px 12px; font-size: 14px; width: 100%;
+  color: var(--text); padding: 9px 12px; font-size: 14px;
 }
 .field-group { display: flex; align-items: flex-start; gap: 8px; }
-.field-testid > input { width: calc(5ch + 26px); }
-.field-sample > input { width: calc(2ch + 26px); }
-.field-material { width: 260px; }
 .field-config { flex: 1; min-width: 180px; }
+.field-config > input { width: 100%; }
+.field-testid input { width: calc(5ch + 26px); }
+.field-sample input { width: calc(2ch + 26px); }
+.field-material { width: 260px; }
+.rec-warn { flex-basis: 100%; color: var(--amber); font-size: 13px; }
+
+/* +/- steppers on numeric fields (always visible) */
+.stepper { display: flex; align-items: stretch; gap: 4px; }
+.stepper-btns { display: flex; flex-direction: column; width: 20px; }
+.stepper-btns button {
+  flex: 1; min-height: 0; padding: 0; cursor: pointer; font-size: 12px; line-height: 1;
+  background: var(--panel-2); border: 1px solid var(--border); color: var(--muted);
+}
+.stepper-btns button:first-child { border-radius: 6px 6px 0 0; }
+.stepper-btns button:last-child { border-radius: 0 0 6px 6px; border-top: none; }
+.stepper-btns button:hover { color: var(--accent); border-color: var(--accent); }
 
 /* Multi-select (token field + "+" picker popup) */
 .multiselect { position: relative; width: 100%; }
 .ms-control {
-  display: flex; flex-wrap: wrap; align-items: center; gap: 5px;
+  display: flex; flex-wrap: wrap; align-items: center; gap: 5px; cursor: pointer;
   background: var(--panel-2); border: 1px solid var(--border); border-radius: 8px;
   padding: 5px 8px; min-height: 38px;
 }
@@ -185,8 +198,15 @@ main {
 .chart-footer { display: flex; align-items: center; margin-top: 12px; }
 
 /* Sessions */
-.sessions-head { display: flex; align-items: baseline; gap: 14px; margin: 4px 0 12px; }
+.sessions-head { display: flex; align-items: center; gap: 12px; margin: 4px 0 12px; flex-wrap: wrap; }
 .sessions-head h2 { font-size: 16px; margin: 0; }
+.session-search {
+  background: var(--panel-2); border: 1px solid var(--border); border-radius: 8px;
+  color: var(--text); padding: 7px 11px; font-size: 14px; min-width: 180px;
+}
+.session-search:focus { border-color: var(--accent); outline: none; }
+.sort-label { color: var(--muted); font-size: 13px; display: inline-flex; align-items: center; gap: 6px; }
+.session-sort { background: var(--panel-2); border: 1px solid var(--border); color: var(--text); border-radius: 8px; padding: 6px 8px; font-size: 13px; }
 .session-list { list-style: none; padding: 0; margin: 0; display: flex; flex-direction: column; gap: 8px; }
 .session-item {
   display: flex; align-items: center; gap: 18px; cursor: pointer;

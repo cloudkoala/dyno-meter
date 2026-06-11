@@ -101,11 +101,30 @@
 
     <section class="record-bar">
       <div class="field-group">
-        <div class="field field-testid"><label for="recTestId">Test ID</label><input id="recTestId" type="text" /></div>
-        <div class="field field-sample"><label for="recSample">Sample</label><input id="recSample" type="text" /></div>
+        <div class="field field-testid">
+          <label for="recTestId">Test ID</label>
+          <div class="stepper">
+            <input id="recTestId" type="text" />
+            <div class="stepper-btns">
+              <button type="button" class="step" data-field="recTestId" data-delta="1" tabindex="-1">+</button>
+              <button type="button" class="step" data-field="recTestId" data-delta="-1" tabindex="-1">−</button>
+            </div>
+          </div>
+        </div>
+        <div class="field field-sample">
+          <label for="recSample">Sample</label>
+          <div class="stepper">
+            <input id="recSample" type="text" />
+            <div class="stepper-btns">
+              <button type="button" class="step" data-field="recSample" data-delta="1" tabindex="-1">+</button>
+              <button type="button" class="step" data-field="recSample" data-delta="-1" tabindex="-1">−</button>
+            </div>
+          </div>
+        </div>
       </div>
       <div class="field field-material"><label>Material</label><div id="recMaterial"></div></div>
       <div class="field field-config"><label for="recConfig">Configuration</label><input id="recConfig" type="text" /></div>
+      <div id="recWarn" class="rec-warn" hidden></div>
     </section>
 
     <section class="chart-wrap">
@@ -128,6 +147,18 @@
       <div class="sessions-head">
         <h2>Saved Sessions</h2>
         <span id="recInfo" class="muted"></span>
+        <span class="spacer"></span>
+        <input id="sessionSearch" class="session-search" type="search" placeholder="Search sessions…" />
+        <label class="sort-label">Sort
+          <select id="sessionSort" class="session-sort">
+            <option value="date-desc">Newest</option>
+            <option value="date-asc">Oldest</option>
+            <option value="max-desc">Max load ↓</option>
+            <option value="max-asc">Max load ↑</option>
+            <option value="dur-desc">Longest</option>
+            <option value="name-asc">Name A–Z</option>
+          </select>
+        </label>
       </div>
       <ul id="sessionList" class="session-list"></ul>
       <p id="noSessions" class="muted">No saved sessions yet.</p>

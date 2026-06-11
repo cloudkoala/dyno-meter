@@ -15,6 +15,7 @@ let lastUnit = null;
 let activeSessionId = null;
 let recInfoTimer = null;
 let recordingNamed = false; // did the user type a name for the active recording?
+let existingNames = new Set(); // lowercased Test ID-Sample names of saved sessions
 let folderHandle = null; // chosen session-library folder (File System Access API)
 
 // A folder is the session library when auto-save is on and a folder is chosen.
@@ -28,7 +29,12 @@ const ui = new UI({
   onConnectToggle, onSimulate, onCommand, onResetMax, onClearGraph,
   onToggleRecord, onSelectSession, onRenameSession, onExportSession, onExportSessionGraph, onDeleteSession,
   onSetting, onDeviceSetting, onPowerOff, onChooseFolder, onRecordFieldChange, onExportGraph,
+  onSessionSearch, onSessionSort,
 });
+
+let allSessions = [];          // full session summary list (unfiltered)
+let sessionQuery = '';         // current search text
+let sessionSort = 'date-desc'; // current sort mode
 
 // Build a "Test ID-Sample" label, tolerating either field being blank.
 function idLabel(testId, sample) {
@@ -318,8 +324,42 @@ async function refreshSessions() {
     list = await store.list();
   }
   ui.setMaterialOptions(materialsFromSessions(list));
-  ui.renderSessions(list, activeSessionId);
+  existingNames = new Set(list.map((s) => (s.name || '').toLowerCase()));
+  checkDuplicate();
+  allSessions = list;
+  applySessionView();
 }
+
+// Filter (search) + sort the full session list, then render.
+function applySessionView() {
+  const q = sessionQuery.trim().toLowerCase();
+  let view = allSessions;
+  if (q) {
+    view = view.filter((s) => {
+      const hay = [s.name, s.config, ...(Array.isArray(s.material) ? s.material : [])]
+        .filter(Boolean).join(' ').toLowerCase();
+      return hay.includes(q);
+    });
+  }
+  view = sortSessions(view, sessionSort);
+  ui.renderSessions(view, activeSessionId);
+  ui.setSessionsEmptyText(allSessions.length ? 'No sessions match your search.' : 'No saved sessions yet.');
+}
+
+function sortSessions(list, mode) {
+  const by = {
+    'date-desc': (a, b) => b.startedAt - a.startedAt,
+    'date-asc': (a, b) => a.startedAt - b.startedAt,
+    'max-desc': (a, b) => b.max - a.max,
+    'max-asc': (a, b) => a.max - b.max,
+    'dur-desc': (a, b) => b.duration - a.duration,
+    'name-asc': (a, b) => (a.name || '').localeCompare(b.name || ''),
+  };
+  return [...list].sort(by[mode] || by['date-desc']);
+}
+
+function onSessionSearch(q) { sessionQuery = q; applySessionView(); }
+function onSessionSort(mode) { sessionSort = mode; applySessionView(); }
 
 // Material dropdown options come solely from materials used in saved sessions.
 // (Typing a brand-new material adds it to the current recording; it becomes a
@@ -408,6 +448,14 @@ function onRecordFieldChange(key, value) {
   if (key === 'sample') ui.setRecordField('sample', value);
   if (key === 'testId') { settings.sample = '01'; ui.setRecordField('sample', '01'); }
   saveSettings();
+  if (key === 'testId' || key === 'sample') checkDuplicate();
+}
+
+// Warn when the current Test ID-Sample already names a saved session.
+function checkDuplicate() {
+  const name = idLabel(settings.testId, settings.sample);
+  const dup = name && existingNames.has(name.toLowerCase());
+  ui.setRecordWarning(dup ? `“${name}” already exists in saved sessions` : '');
 }
 
 function normalizeSample(v) {

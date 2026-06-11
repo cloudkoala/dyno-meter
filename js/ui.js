@@ -7,6 +7,17 @@ import { MultiSelect } from './multiselect.js';
 // Display helper: material is a list; join for single-line display.
 const matStr = (m) => (Array.isArray(m) ? m.join(', ') : (m || ''));
 
+// Step the trailing integer in a string by delta, preserving any prefix and
+// zero-pad width (e.g. "01"->"02", "Beam-09"->"Beam-10"). Floors at 0; an empty
+// value steps up to "1". Non-numeric text without a trailing number is unchanged.
+function stepTrailingNumber(str, delta) {
+  const s = String(str ?? '');
+  const m = s.match(/^(.*?)(\d+)$/);
+  if (!m) return s.trim() === '' ? (delta > 0 ? '1' : '') : s;
+  const next = Math.max(0, parseInt(m[2], 10) + delta);
+  return m[1] + String(next).padStart(m[2].length, '0');
+}
+
 const $ = (id) => document.getElementById(id);
 
 const TRASH_SVG = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="3 6 5 6 21 6"/><path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"/><line x1="10" y1="11" x2="10" y2="17"/><line x1="14" y1="11" x2="14" y2="17"/></svg>';
@@ -48,12 +59,25 @@ export class UI {
     for (const [id, key] of Object.entries(fieldIds)) {
       $(id).onchange = () => this.h.onRecordFieldChange(key, $(id).value.trim());
     }
+    // +/- steppers for Test ID and Sample.
+    document.querySelectorAll('.step').forEach((btn) => {
+      btn.onclick = () => {
+        const input = $(btn.dataset.field);
+        input.value = stepTrailingNumber(input.value, Number(btn.dataset.delta));
+        const key = btn.dataset.field === 'recTestId' ? 'testId' : 'sample';
+        this.h.onRecordFieldChange(key, input.value.trim());
+      };
+    });
     // Material is a multi-select (tags + searchable picker). Options are
     // populated from saved sessions via setMaterialOptions(), not persisted here.
     this.materialSelect = new MultiSelect($('recMaterial'), {
       onChange: (vals) => this.h.onRecordFieldChange('material', vals),
     });
     $('liveBtn').onclick = () => this.showLive();
+
+    // Saved-session search + sort
+    $('sessionSearch').oninput = () => this.h.onSessionSearch($('sessionSearch').value);
+    $('sessionSort').onchange = () => this.h.onSessionSort($('sessionSort').value);
 
     $('debugClear').onclick = () => { $('debugLog').textContent = ''; };
 
@@ -444,6 +468,12 @@ export class UI {
   }
 
   setRecInfo(text) { $('recInfo').textContent = text; }
+  setSessionsEmptyText(text) { $('noSessions').textContent = text; }
+  setRecordWarning(text) {
+    const el = $('recWarn');
+    el.hidden = !text;
+    el.textContent = text ? `⚠ ${text}` : '';
+  }
 
   // ---- session list ------------------------------------------------------
 
