@@ -108,22 +108,44 @@ main {
 .dev-kind { color: var(--muted); font-size: 12px; padding-left: 5px; }
 
 /* Big readouts */
-.dev-readouts { display: flex; align-items: flex-end; gap: 30px; flex: 1; flex-wrap: wrap; }
+.dev-readouts { display: flex; align-items: flex-end; gap: 48px; flex: 1; flex-wrap: wrap; }
+.dev-divider { flex: none; align-self: center; width: 1px; height: 64px; background: var(--border); }
 .dev-ro-label { color: var(--muted); font-size: 12px; text-transform: uppercase; letter-spacing: .8px; }
 .dev-ro-value { font-variant-numeric: tabular-nums; font-weight: 700; line-height: 1.05; }
 .dev-ro-cur .dev-ro-value { font-size: 60px; }
-.dev-ro-max .dev-ro-value { font-size: 34px; color: var(--amber); }
-.dev-ro-rate .dev-ro-value, .dev-ro-batt .dev-ro-value { font-size: 22px; }
+.dev-ro-max .dev-ro-value { font-size: 60px; color: var(--amber); }
+.dev-ro-rate .dev-ro-value, .dev-ro-batt .dev-ro-value { font-size: 20px; }
 .dev-ro-batt { font-variant-numeric: tabular-nums; }
+/* Rate + Battery stacked vertically in one compact column */
+.dev-ro-meta { display: flex; flex-direction: column; gap: 8px; align-self: center; }
 
 /* Controls */
 .dev-ctl { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
-.dev-ctl .btn-sm { padding: 7px 12px; font-size: 13px; }
-.dev-close {
-  background: none; border: none; color: var(--muted);
-  font-size: 22px; line-height: 1; cursor: pointer; padding: 2px 8px; border-radius: 7px;
+.dev-gear-wrap { position: relative; }
+.dev-gear {
+  background: none; border: 1px solid var(--border); color: var(--muted);
+  width: 38px; height: 38px; border-radius: 9px; cursor: pointer;
+  display: flex; align-items: center; justify-content: center;
 }
-.dev-close:hover { color: #fff; background: var(--red); }
+.dev-gear svg { width: 18px; height: 18px; }
+.dev-gear:hover { color: var(--text); border-color: var(--accent); }
+.dev-menu {
+  position: absolute; right: 0; top: calc(100% + 6px); z-index: 30;
+  background: var(--panel-2); border: 1px solid var(--border); border-radius: 10px;
+  padding: 6px; display: flex; flex-direction: column; gap: 2px; min-width: 140px;
+  box-shadow: 0 8px 24px rgba(0,0,0,.4);
+}
+.dev-menu-item {
+  background: none; border: none; color: var(--text); font: inherit; font-size: 14px;
+  text-align: left; padding: 8px 12px; border-radius: 7px; cursor: pointer;
+}
+.dev-menu-item:hover { background: var(--panel); }
+.dev-close {
+  background: none; border: 1px solid var(--border); color: var(--muted);
+  width: 38px; height: 38px; border-radius: 9px; cursor: pointer; line-height: 1;
+  display: flex; align-items: center; justify-content: center; font-size: 22px;
+}
+.dev-close:hover { color: #fff; background: var(--red); border-color: var(--red); }
 
 /* Controls */
 .controls {

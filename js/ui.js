@@ -96,6 +96,7 @@ export class UI {
       if (!$('settingsPanel').hidden && !e.target.closest('.settings-wrap')) this.toggleSettings(false);
       if (!$('deviceList').hidden && !e.target.closest('.conn-wrap')) this._toggleDeviceList(false);
       if (!e.target.closest('.share-wrap')) document.querySelectorAll('.share-menu').forEach((m) => { m.hidden = true; });
+      if (!e.target.closest('.dev-gear-wrap')) document.querySelectorAll('.dev-menu').forEach((m) => { m.hidden = true; });
     });
     // App-pref inputs report changes via onSetting(key, value).
     $('setDebug').onchange = () => this.h.onSetting('debug', $('setDebug').checked);
@@ -654,9 +655,12 @@ export class UI {
 
       const maxRO = mkRO('dev-ro-max', 'Max');
       const max = document.createElement('span'); max.className = 'dev-max-num';
-      const maxUnit = document.createElement('span'); maxUnit.className = 'unit unit-sm';
+      const maxUnit = document.createElement('span'); maxUnit.className = 'unit';
       maxRO.val.append(max, maxUnit);
 
+      // Rate + Battery stacked vertically in one compact column.
+      const meta = document.createElement('div');
+      meta.className = 'dev-ro-meta';
       const rateRO = mkRO('dev-ro-rate', 'Rate');
       const rate = document.createElement('span'); rate.className = 'dev-rate-num';
       rateRO.val.append(rate, document.createTextNode(' Hz'));
@@ -664,31 +668,53 @@ export class UI {
       const battRO = mkRO('dev-ro-batt', 'Battery');
       const batt = document.createElement('span'); batt.className = 'dev-batt-num';
       battRO.val.append(batt);
+      meta.append(rateRO.box, battRO.box);
 
-      readouts.append(curRO.box, maxRO.box, rateRO.box, battRO.box);
+      // Thin partial divider between adjacent sections.
+      const mkDiv = () => { const d = document.createElement('div'); d.className = 'dev-divider'; return d; };
+      readouts.append(curRO.box, mkDiv(), maxRO.box, mkDiv(), meta);
 
-      // Controls: Zero / Tare / Reset + disconnect ×.
+      // Controls: settings gear (Zero / Tare / Reset menu) + disconnect ×.
       const ctl = document.createElement('div');
       ctl.className = 'dev-ctl';
-      const mkBtn = (text, title, fn) => {
+
+      const gearWrap = document.createElement('div');
+      gearWrap.className = 'dev-gear-wrap';
+      const gear = document.createElement('button');
+      gear.className = 'dev-gear';
+      gear.title = 'Device controls';
+      gear.setAttribute('aria-label', 'Device controls');
+      gear.innerHTML = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 1 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-4 0v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 1 1-2.83-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1 0-4h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 1 1 2.83-2.83l.06.06a1.65 1.65 0 0 0 1.82.33H9a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 1 1 2.83 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1z"/></svg>';
+      const menu = document.createElement('div');
+      menu.className = 'dev-menu';
+      menu.hidden = true;
+      gear.onclick = (e) => {
+        e.stopPropagation();
+        document.querySelectorAll('.dev-menu').forEach((m) => { if (m !== menu) m.hidden = true; });
+        menu.hidden = !menu.hidden;
+      };
+      const mkMenuItem = (text, title, fn) => {
         const b = document.createElement('button');
-        b.className = 'btn btn-sm';
-        b.textContent = text; b.title = title; b.onclick = fn;
+        b.className = 'dev-menu-item';
+        b.textContent = text; b.title = title;
+        b.onclick = () => { menu.hidden = true; fn(); };
         return b;
       };
+      menu.append(
+        mkMenuItem('Zero', 'Zero the current reading', () => this.h.onChannelCommand(c.id, 'ZERO')),
+        mkMenuItem('Tare', 'Set current value as absolute zero', () => this.h.onChannelCommand(c.id, 'SET_ABS_ZERO')),
+        mkMenuItem('Reset', 'Reset max (and clear the device peak)', () => this.h.onChannelReset(c.id)),
+      );
+      gearWrap.append(gear, menu);
+
       const close = document.createElement('button');
       close.className = 'dev-close';
       close.textContent = '×';
       close.title = 'Disconnect this device';
       close.onclick = () => this.h.onChannelDisconnect(c.id);
-      ctl.append(
-        mkBtn('Zero', 'Zero the current reading', () => this.h.onChannelCommand(c.id, 'ZERO')),
-        mkBtn('Tare', 'Set current value as absolute zero', () => this.h.onChannelCommand(c.id, 'SET_ABS_ZERO')),
-        mkBtn('Reset', 'Reset max (and clear the device peak)', () => this.h.onChannelReset(c.id)),
-        close,
-      );
+      ctl.append(gearWrap, close);
 
-      bar.append(ident, readouts, ctl);
+      bar.append(ident, mkDiv(), readouts, ctl);
       wrap.append(bar);
       this._bars.set(c.id, { cur, curUnit, max, maxUnit, rate, batt, overload });
     }
