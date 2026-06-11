@@ -56,6 +56,14 @@ export class UI {
       else this.h.onConnect();
     };
     $('simulateBtn').onclick = () => this.h.onSimulate();
+    $('connectEnforcerBtn').onclick = () => this.h.onConnectEnforcer();
+    $('discoverBtn').onclick = () => this.h.onDiscover();
+
+    // Discovery/capture controls (debug panel).
+    this._capRows = [];
+    $('captureExport').onclick = () => this._exportCapture();
+    $('captureClear').onclick = () => this._clearCapture();
+    $('probeWriteBtn').onclick = () => this.h.onProbeWrite($('probeChar').value, $('probeHex').value);
 
     $('clearGraphBtn').onclick = () => this.h.onClearGraph();
     $('pauseBtn').onclick = () => this.togglePause();
@@ -938,6 +946,58 @@ export class UI {
       this.toggleDebug(true);
       this.toast('Connected, but no data received from the device — see Debug panel', true);
     }
+    // Discovery mode: a captured notification, and the list of writable chars.
+    if (d.capture) this._captureRow(d.capture);
+    if (d.chars) this._setProbeChars(d.chars);
+  }
+
+  // Append one captured BLE notification to the capture table (capped) and keep
+  // the raw row for export. Auto-opens the debug panel on first capture.
+  _captureRow(c) {
+    if (!this._capRows) this._capRows = [];
+    this._capRows.push(c);
+    const el = $('captureLog');
+    const row = document.createElement('div');
+    row.className = 'cap-row';
+    row.innerHTML =
+      `<span class="cap-ts">${c.ts}</span>` +
+      `<span class="cap-char">${c.char}</span>` +
+      `<span class="cap-hex">${c.hex}</span>` +
+      `<span class="cap-ascii">${c.ascii}</span>`;
+    el.append(row);
+    while (el.childElementCount > 500) el.firstElementChild.remove();
+    el.scrollTop = el.scrollHeight;
+    $('captureCount').textContent = `${this._capRows.length} rows`;
+    if (this._capRows.length === 1) this.toggleDebug(true);
+  }
+
+  _setProbeChars(chars) {
+    const sel = $('probeChar');
+    sel.innerHTML = '';
+    if (!chars.length) {
+      sel.innerHTML = '<option value="">(no writable characteristics)</option>';
+      return;
+    }
+    for (const c of chars) {
+      const o = document.createElement('option');
+      o.value = c.uuid; o.textContent = c.label;
+      sel.append(o);
+    }
+  }
+
+  _clearCapture() {
+    this._capRows = [];
+    $('captureLog').innerHTML = '';
+    $('captureCount').textContent = '0 rows';
+  }
+
+  _exportCapture() {
+    if (!this._capRows || !this._capRows.length) { this.toast('No capture to export', true); return; }
+    const header = 'ts_s,char,hex,ascii';
+    const lines = this._capRows.map((c) => `${c.ts},${c.char},${c.hex},"${c.ascii.replace(/"/g, '""')}"`);
+    const blob = new Blob([[header, ...lines].join('\n')], { type: 'text/csv' });
+    this._download(blob, 'ble-capture.csv');
+    this.toast(`Exported ${this._capRows.length} rows`);
   }
 
   resetDiag() {

@@ -62,6 +62,9 @@
             <button id="powerOffBtn" class="btn device-setting" disabled>Power off device</button>
           </div>
           <div class="settings-section" id="simulateSection">
+            <h3>Devices</h3>
+            <button id="connectEnforcerBtn" class="btn">Connect Rock Exotica Enforcer</button>
+            <button id="discoverBtn" class="btn">Discovery / capture mode</button>
             <button id="simulateBtn" class="btn">Simulate device (no hardware)</button>
           </div>
         </div>
@@ -155,6 +158,19 @@
       <div class="debug-row"><span class="debug-key">last raw</span><code id="debugRaw">—</code></div>
       <div class="debug-row"><span class="debug-key">ascii</span><code id="debugAscii">—</code></div>
       <pre id="debugLog" class="debug-log"></pre>
+      <div class="capture-head">
+        <strong>BLE Capture</strong>
+        <span id="captureCount" class="muted">0 rows</span>
+        <span class="spacer"></span>
+        <button id="captureExport" class="icon-btn">Export</button>
+        <button id="captureClear" class="icon-btn">Clear</button>
+      </div>
+      <div class="probe-row">
+        <select id="probeChar" class="probe-char"><option value="">(no writable characteristics)</option></select>
+        <input id="probeHex" class="probe-hex" type="text" placeholder="hex to write, e.g. 41 0d 0a 58" />
+        <button id="probeWriteBtn" class="btn btn-sm">Write</button>
+      </div>
+      <div id="captureLog" class="capture-log"></div>
     </section>
   </main>
 

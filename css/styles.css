@@ -377,6 +377,18 @@ body.is-recording .device-bar { border-color: var(--red); }
 .debug code { color: var(--accent); font-size: 13px; word-break: break-all; }
 .debug-log { background: #05070a; border: 1px solid var(--border); border-radius: 8px; padding: 10px; margin: 10px 0 0; max-height: 240px; overflow: auto; font-size: 12px; color: var(--muted); white-space: pre-wrap; }
 
+/* Discovery / capture mode */
+.capture-head { display: flex; align-items: center; gap: 12px; margin: 14px 0 8px; }
+.probe-row { display: flex; gap: 8px; align-items: center; margin-bottom: 8px; }
+.probe-char { flex: 0 1 240px; background: var(--panel-2); border: 1px solid var(--border); border-radius: 7px; padding: 6px 8px; color: var(--text); font-family: inherit; font-size: 12px; }
+.probe-hex { flex: 1; min-width: 120px; background: #05070a; border: 1px solid var(--border); border-radius: 7px; padding: 6px 8px; color: var(--accent); font-family: inherit; font-size: 12px; }
+.capture-log { background: #05070a; border: 1px solid var(--border); border-radius: 8px; padding: 6px; max-height: 260px; overflow: auto; font-size: 12px; }
+.cap-row { display: flex; gap: 10px; padding: 2px 4px; border-bottom: 1px solid rgba(255,255,255,.04); white-space: nowrap; }
+.cap-ts { color: var(--muted); min-width: 56px; text-align: right; }
+.cap-char { color: var(--accent-2); min-width: 64px; }
+.cap-hex { color: var(--accent); flex: 1; overflow: hidden; text-overflow: ellipsis; }
+.cap-ascii { color: var(--text); min-width: 120px; }
+
 /* Modal (name prompt) */
 .modal { position: fixed; inset: 0; background: rgba(0,0,0,.55); display: flex; align-items: center; justify-content: center; z-index: 60; }
 .modal-card { background: var(--panel); border: 1px solid var(--border); border-radius: 14px; padding: 22px; width: 360px; max-width: 90vw; box-shadow: 0 20px 60px rgba(0,0,0,.6); }

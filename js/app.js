@@ -1,7 +1,10 @@
 // Application wiring: connects a Source (BLE or Simulator) to the Store and UI.
 
 import { BLEConnection } from './connection.js';
+import { ENFORCER_PROFILE } from './profiles.js';
 import { Simulator } from './simulator.js';
+import { EnforcerSimulator } from './enforcer-sim.js';
+import { DiscoverySource } from './discovery.js';
 import { Store, recordingToCSV, asChannels } from './store.js';
 import { UI } from './ui.js';
 import { absoluteForce } from './protocol.js';
@@ -40,7 +43,7 @@ async function getSessionActive(id) {
 }
 
 const ui = new UI({
-  onConnect, onSimulate, onClearGraph,
+  onConnect, onConnectEnforcer, onDiscover, onProbeWrite, onSimulate, onClearGraph,
   onDisconnectAll, onChannelDisconnect, onChannelLabel, onChannelCommand, onChannelReset, onChannelColor,
   onToggleRecord, onSelectSession, onRenameSession, onExportSession, onExportSessionGraph, onDeleteSession,
   onSetting, onDeviceSetting, onPowerOff, onChooseFolder, onRecordFieldChange, onExportGraph,
@@ -122,7 +125,9 @@ async function main() {
   ui.setFsSupported(fs.fsSupported());
   // ?sim=1 auto-starts the simulated device — do this before any storage await
   // so the live UI never waits on IndexedDB.
-  if (new URLSearchParams(location.search).has('sim')) onSimulate();
+  const params = new URLSearchParams(location.search);
+  if (params.has('sim')) onSimulate();
+  if (params.has('simEnforcer')) onSimulateEnforcer();
   // Restore the previously chosen session-library folder, if any.
   if (fs.fsSupported()) {
     try { folderHandle = (await fs.savedFolder()) || null; } catch { /* ignore */ }
@@ -141,7 +146,7 @@ async function main() {
 async function addChannel(source) {
   const id = nextChanId++;
   const idx = channels.length;
-  const kind = source instanceof Simulator ? 'Simulated device' : 'LineScale 3';
+  const kind = source.deviceLabel || 'Device';
   const n = ++deviceSeq; // single-digit device number for the default name
   const ch = {
     id, source,
@@ -167,9 +172,12 @@ async function addChannel(source) {
   startSampler();
   try {
     await source.connect();
-    // Force the new device to the global unit so all devices match.
-    const cmd = UNIT_CMD[settings.unit] || 'UNIT_KN';
-    source.send(cmd).catch(() => {});
+    // Force the new device to the global unit so all devices match. Devices that
+    // can't switch units (e.g. the Enforcer) opt out via canSetUnit.
+    if (source.canSetUnit !== false) {
+      const cmd = UNIT_CMD[settings.unit] || 'UNIT_KN';
+      source.send(cmd).catch(() => {});
+    }
   } catch (err) {
     removeChannel(ch); // connect failed — undo the half-added channel
     ui.toast(err.message || 'Connection failed', true);
@@ -181,7 +189,7 @@ function onChannelStatus(ch, s) {
   if (s.state === 'connecting') {
     if (isPrimary) ui.resetDiag();
   } else if (s.state === 'connected') {
-    ch.name = s.name || 'LineScale 3';
+    ch.name = s.name || ch.kind;
     if (isPrimary) { ch.max = 0; ch.unit = null; }
     refreshDeviceUI();
   } else if (s.state === 'disconnected') {
@@ -232,6 +240,39 @@ function stopSampler() {
 
 async function onConnect() {
   await addChannel(new BLEConnection());
+}
+
+// Connect a Rock Exotica Enforcer (scaffold: pairs but won't stream until the
+// protocol is captured/decoded — use Discovery mode to capture it first).
+async function onConnectEnforcer() {
+  await addChannel(new BLEConnection(ENFORCER_PROFILE));
+}
+
+// Discovery / capture mode: connect to any BLE device and dump its services,
+// characteristics, and raw notifications to the debug panel for decoding.
+async function onDiscover() {
+  let extra = [];
+  const entered = prompt(
+    'Discovery mode\n\nOptional: paste the device service UUID(s) to expose ' +
+    '(comma-separated). Web Bluetooth can only read services listed up front.\n\n' +
+    'Leave blank to scan common services.',
+  );
+  if (entered) extra = entered.split(/[\s,]+/).filter(Boolean);
+  await addChannel(new DiscoverySource(extra));
+}
+
+// Run the fake Enforcer (UI testing without hardware or a decoded protocol).
+async function onSimulateEnforcer() {
+  await addChannel(new EnforcerSimulator());
+  ui.toast('Enforcer simulator running');
+}
+
+// Probe-write arbitrary hex to a characteristic on the connected Discovery device.
+async function onProbeWrite(charUuid, hex) {
+  const ch = channels.find((c) => typeof c.source.writeHex === 'function');
+  if (!ch) { ui.toast('Connect Discovery mode first', true); return; }
+  try { await ch.source.writeHex(charUuid, hex); }
+  catch (e) { ui.toast(e.message || 'Write failed', true); }
 }
 
 async function onSimulate() {
@@ -324,7 +365,7 @@ async function onSetting(key, value) {
   // Global unit: force every connected device to the chosen unit.
   if (key === 'unit') {
     const cmd = UNIT_CMD[value] || 'UNIT_KN';
-    try { await Promise.all(channels.map((c) => c.source.send(cmd))); }
+    try { await Promise.all(channels.filter((c) => c.source.canSetUnit !== false).map((c) => c.source.send(cmd))); }
     catch (err) { ui.toast(err.message || 'Unit change failed', true); }
   }
   // Switching the session library on/off (folder vs browser storage).

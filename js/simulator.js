@@ -10,6 +10,8 @@ const KN_TO = { N: 1, G: 101.9716, B: 224.8089 }; // kN -> kN/kgf/lbf
 export class Simulator extends Source {
   constructor() {
     super();
+    this.deviceType = 'sim';
+    this.deviceLabel = 'Simulated device';
     this.unitCode = 'N';
     this.speedCode = 'F';
     this.measureMode = 'N';

@@ -1,17 +1,23 @@
-// Connection layer. BLEConnection talks to the LS3 over Web Bluetooth.
-// All sources (BLE, and later Web Serial / the simulator) share the Source
-// interface: connect(), disconnect(), send(cmdName), onReading(cb), onStatus(cb).
-// Sources may also emit diagnostics via onDiag(cb) for the debug panel.
+// Connection layer. BLEConnection talks to a device over Web Bluetooth, driven
+// by a device "profile" (js/profiles.js) so one backend serves many devices.
+// All sources (BLE, the simulator, discovery mode) share the Source interface:
+// connect(), disconnect(), send(cmdName), onReading(cb), onStatus(cb).
+// Sources may also emit diagnostics via onDiag(cb) for the debug panel, and
+// declare their identity via deviceType/deviceLabel/defaultUnit/canSetUnit.
 
-import { UUID, CMD, PACKET_LEN, END_FLAG, parsePacket } from './protocol.js';
-
-const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
+import { LS3_PROFILE } from './profiles.js';
+import { short, toHex, toAscii, charFlags } from './ble-util.js';
 
 export class Source {
   constructor() {
     this._readingCbs = [];
     this._statusCbs = [];
     this._diagCbs = [];
+    // Device identity (subclasses override). Used by app.js for naming, units.
+    this.deviceType = 'device';
+    this.deviceLabel = 'Device';
+    this.defaultUnit = 'kN';
+    this.canSetUnit = true;
   }
   onReading(cb) { this._readingCbs.push(cb); return this; }
   onStatus(cb) { this._statusCbs.push(cb); return this; }
@@ -23,8 +29,13 @@ export class Source {
 }
 
 export class BLEConnection extends Source {
-  constructor() {
+  constructor(profile = LS3_PROFILE) {
     super();
+    this.profile = profile;
+    this.deviceType = profile.deviceType;
+    this.deviceLabel = profile.deviceLabel;
+    this.defaultUnit = profile.defaultUnit;
+    this.canSetUnit = profile.canSetUnit !== false;
     this.device = null;
     this.server = null;
     this.writeChar = null;
@@ -48,34 +59,31 @@ export class BLEConnection extends Source {
     }
     this._emitStatus({ state: 'connecting' });
 
-    this.device = await navigator.bluetooth.requestDevice({
-      filters: [{ services: [UUID.service] }],
-      optionalServices: [UUID.service],
-    });
+    const services = this.profile.services || [];
+    this.device = await navigator.bluetooth.requestDevice(
+      this.profile.acceptAllDevices
+        ? { acceptAllDevices: true, optionalServices: services }
+        : { filters: services.map((s) => ({ services: [s] })), optionalServices: services },
+    );
     this._log(`device: ${this.device.name || '(unnamed)'} [${this.device.id}]`);
     this.device.addEventListener('gattserverdisconnected', this._onDisconnect);
 
     this.server = await this.device.gatt.connect();
-    const service = await this.server.getPrimaryService(UUID.service);
+    const service = await this.server.getPrimaryService(services[0]);
 
     // Enumerate the service's characteristics so we can confirm the expected
     // UUIDs and fall back to capability-based detection if they differ.
     const chars = await service.getCharacteristics();
-    this._log(`service ${short(UUID.service)} has ${chars.length} characteristic(s):`);
+    this._log(`service ${short(services[0])} has ${chars.length} characteristic(s):`);
     for (const c of chars) {
-      const p = c.properties;
-      const flags = [
-        p.notify && 'notify', p.indicate && 'indicate', p.read && 'read',
-        p.write && 'write', p.writeWithoutResponse && 'writeNoResp',
-      ].filter(Boolean).join(',');
-      this._log(`  • ${short(c.uuid)}  [${flags}]`);
+      this._log(`  • ${short(c.uuid)}  [${charFlags(c.properties)}]`);
     }
 
     this.notifyChar =
-      chars.find((c) => c.uuid === UUID.notify) ||
+      chars.find((c) => c.uuid === this.profile.notifyUuid) ||
       chars.find((c) => c.properties.notify || c.properties.indicate);
     this.writeChar =
-      chars.find((c) => c.uuid === UUID.write) ||
+      chars.find((c) => c.uuid === this.profile.writeUuid) ||
       chars.find((c) => c.properties.write || c.properties.writeWithoutResponse);
 
     if (!this.notifyChar) throw new Error('No notify characteristic found on device');
@@ -89,10 +97,10 @@ export class BLEConnection extends Source {
     await this.notifyChar.startNotifications();
     this._log('notifications started');
 
-    this._emitStatus({ state: 'connected', name: this.device.name || 'LineScale 3' });
+    this._emitStatus({ state: 'connected', name: this.device.name || this.profile.deviceLabel });
 
-    // Ask the device to go online and stream at 40 Hz (the BLE maximum). If no
-    // data arrives, the watchdog re-sends the start command a few times.
+    // Ask the device to begin streaming (profile-defined). If no data arrives,
+    // the watchdog re-runs the start sequence a few times.
     await this._startStreaming();
     this._armWatchdog();
     return this;
@@ -100,10 +108,7 @@ export class BLEConnection extends Source {
 
   async _startStreaming() {
     this._startTries++;
-    this._log(`sending start (A) + 40Hz (F)  [try ${this._startTries}]`);
-    await this.send('ONLINE');
-    await sleep(120);
-    await this.send('SPEED_40HZ');
+    if (this.profile.startStream) await this.profile.startStream(this, this._startTries);
   }
 
   _armWatchdog() {
@@ -122,8 +127,11 @@ export class BLEConnection extends Source {
   }
 
   async send(cmdName) {
-    const frame = CMD[cmdName];
-    if (!frame) throw new Error(`Unknown command: ${cmdName}`);
+    const frame = this.profile.cmd[cmdName];
+    if (!frame) {
+      if (this.profile.ignoreUnknownCmd) return; // device has no such command
+      throw new Error(`Unknown command: ${cmdName}`);
+    }
     if (!this.writeChar) throw new Error('Not connected');
     try {
       if (this._writeNoResp) await this.writeChar.writeValueWithoutResponse(frame);
@@ -143,7 +151,7 @@ export class BLEConnection extends Source {
   async disconnect() {
     clearInterval(this._watchdog); this._watchdog = null;
     try {
-      if (this.writeChar) await this.send('OFFLINE').catch(() => {});
+      if (this.writeChar && this.profile.cmd.OFFLINE) await this.send('OFFLINE').catch(() => {});
       if (this.notifyChar) await this.notifyChar.stopNotifications().catch(() => {});
     } finally {
       if (this.server && this.server.connected) this.server.disconnect();
@@ -164,48 +172,45 @@ export class BLEConnection extends Source {
     for (let i = 0; i < view.byteLength; i++) bytes.push(view.getUint8(i));
     this.stats.notifs++;
     this.stats.bytes += bytes.length;
-    this._buf.push(...bytes);
     this._diag({ raw: { hex: toHex(bytes), ascii: toAscii(bytes) } });
-    this._drainFrames();
+    if (this.profile.endFlag == null) {
+      // Passthrough: each notification is a frame (framing unknown).
+      this._consumeFrame(bytes);
+      this._diag({ stats: { ...this.stats } });
+    } else {
+      this._buf.push(...bytes);
+      this._drainFrames();
+    }
   }
 
-  // Split the rolling byte buffer into 20-byte frames terminated by 0x0D,
-  // tolerating BLE chunking and the occasional misaligned byte.
+  _consumeFrame(frame) {
+    this.stats.frames++;
+    const reading = this.profile.parse(Uint8Array.from(frame));
+    if (reading) { this.stats.parsed++; this._emitReading(reading); }
+    else { this.stats.failed++; this._diag({ parseFail: toAscii(frame) }); }
+  }
+
+  // Split the rolling byte buffer into packetLen-byte frames terminated by the
+  // profile's endFlag, tolerating BLE chunking and the occasional stray byte.
   _drainFrames() {
+    const { endFlag, packetLen } = this.profile;
     let end;
-    while ((end = this._buf.indexOf(END_FLAG)) !== -1) {
+    while ((end = this._buf.indexOf(endFlag)) !== -1) {
       const frameLen = end + 1;
       let frame = null;
-      if (frameLen === PACKET_LEN) {
-        frame = this._buf.slice(0, PACKET_LEN);
-      } else if (frameLen > PACKET_LEN) {
-        // Leading garbage: keep the last 20 bytes up to and including the flag.
-        frame = this._buf.slice(frameLen - PACKET_LEN, frameLen);
+      if (frameLen === packetLen) {
+        frame = this._buf.slice(0, packetLen);
+      } else if (frameLen > packetLen) {
+        // Leading garbage: keep the last packetLen bytes up to and incl. the flag.
+        frame = this._buf.slice(frameLen - packetLen, frameLen);
       }
       this._buf = this._buf.slice(frameLen); // drop consumed bytes either way
-      if (frame) {
-        this.stats.frames++;
-        const reading = parsePacket(Uint8Array.from(frame));
-        if (reading) { this.stats.parsed++; this._emitReading(reading); }
-        else { this.stats.failed++; this._diag({ parseFail: toAscii(frame) }); }
-      }
+      if (frame) this._consumeFrame(frame);
     }
     this._diag({ stats: { ...this.stats } });
     // Guard against unbounded growth if no end flag ever arrives.
-    if (this._buf.length > 4 * PACKET_LEN) {
-      this._buf = this._buf.slice(this._buf.length - PACKET_LEN);
+    if (this._buf.length > 4 * packetLen) {
+      this._buf = this._buf.slice(this._buf.length - packetLen);
     }
   }
-}
-
-function short(uuid) {
-  // 0000XXXX-0000-1000-8000-00805f9b34fb -> 0xXXXX, else the full uuid.
-  const m = /^0000([0-9a-f]{4})-0000-1000-8000-00805f9b34fb$/i.exec(uuid);
-  return m ? `0x${m[1]}` : uuid;
-}
-function toHex(bytes) {
-  return bytes.map((b) => b.toString(16).padStart(2, '0')).join(' ');
-}
-function toAscii(bytes) {
-  return bytes.map((b) => (b >= 0x20 && b < 0x7f ? String.fromCharCode(b) : '·')).join('');
 }
