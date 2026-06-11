@@ -48,8 +48,13 @@ export class UI {
   }
 
   init() {
-    // Top bar — Connect adds a device (clicking again adds another).
-    $('connectBtn').onclick = () => this.h.onConnect();
+    // Top-bar connection circle: red when no device (click connects one);
+    // green with a count when connected (click lists devices to disconnect).
+    $('connCircle').onclick = (e) => {
+      e.stopPropagation();
+      if ((this._devices || []).length) this._toggleDeviceList();
+      else this.h.onConnect();
+    };
     $('simulateBtn').onclick = () => this.h.onSimulate();
 
     $('resetBtn').onclick = () => this.h.onResetMax();
@@ -87,13 +92,10 @@ export class UI {
 
     // Settings popover
     $('settingsBtn').onclick = (e) => { e.stopPropagation(); this.toggleSettings(); };
-    // Connected-device pill -> disconnect menu
-    $('status').onclick = (e) => { e.stopPropagation(); this.toggleDeviceMenu(); };
-    $('disconnectBtn').onclick = () => { this.toggleDeviceMenu(false); this.h.onDisconnectAll(); };
     // Close any open popover when clicking outside it.
     document.addEventListener('click', (e) => {
       if (!$('settingsPanel').hidden && !e.target.closest('.settings-wrap')) this.toggleSettings(false);
-      if (!$('deviceMenu').hidden && !e.target.closest('.device-wrap')) this.toggleDeviceMenu(false);
+      if (!$('deviceList').hidden && !e.target.closest('.conn-wrap')) this._toggleDeviceList(false);
       if (!e.target.closest('.share-wrap')) document.querySelectorAll('.share-menu').forEach((m) => { m.hidden = true; });
     });
     // App-pref inputs report changes via onSetting(key, value).
@@ -134,8 +136,8 @@ export class UI {
     $('settingsBtn').classList.toggle('active', !panel.hidden);
   }
 
-  toggleDeviceMenu(force) {
-    const m = $('deviceMenu');
+  _toggleDeviceList(force) {
+    const m = $('deviceList');
     m.hidden = force === undefined ? !m.hidden : !force;
   }
 
@@ -327,7 +329,9 @@ export class UI {
     channels.forEach((c, i) => {
       const m = new Map(c.samples.map((s) => [s.t, s.value]));
       const ys = xs.map((t) => (m.has(t) ? m.get(t) : null));
-      series.push({ label: label(c, i), stroke: color(i), width: 1.6, points: { show: false } });
+      // spanGaps: each channel only has points at its own timestamps (null at
+      // the other channels'), so connect across those nulls to get a solid line.
+      series.push({ label: label(c, i), stroke: color(i), width: 1.6, points: { show: false }, spanGaps: true });
       data.push(ys.length ? ys : [0]);
     });
     if (data.length === 1) data.push([0]); // no channels: keep a placeholder series
@@ -432,7 +436,7 @@ export class UI {
         data.push(ux.map((x) => (m.has(x) ? m.get(x) : null)));
         series.push(single
           ? { stroke: c.color, width: 2, fill: 'rgba(63,182,255,0.12)', points: { show: false } }
-          : { stroke: c.color || CHAN_COLORS[i % CHAN_COLORS.length], width: 2, points: { show: false } });
+          : { stroke: c.color || CHAN_COLORS[i % CHAN_COLORS.length], width: 2, points: { show: false }, spanGaps: true });
       });
 
       let u;
@@ -533,30 +537,37 @@ export class UI {
 
   // ---- readouts ----------------------------------------------------------
 
-  // Reflect the PRIMARY channel's connection state into the controls. The
-  // device pill text itself is driven by setDeviceSummary (multi-device aware).
-  setStatus(state, name) {
-    const connected = state === 'connected';
-    const connecting = state === 'connecting';
+  // Connection circle + device list. `devices` = [{ id, label, kind }].
+  // Red empty circle when none; green circle with a count when connected.
+  // Clicking the circle (when connected) opens the list; each row has a red ×.
+  setDevices(devices) {
+    this._devices = devices;
+    const n = devices.length;
+    const circle = $('connCircle');
+    circle.classList.toggle('conn-empty', n === 0);
+    circle.classList.toggle('conn-on', n > 0);
+    circle.textContent = n > 0 ? String(n) : '';
+    circle.title = n > 0 ? 'Connected devices' : 'Connect a device';
 
-    if (!connected) this.toggleDeviceMenu(false);
-
-    // The Connect button is the disconnected / connecting indicator and also the
-    // "add another device" action; it stays visible so more devices can be added.
-    const btn = $('connectBtn');
-    btn.disabled = connecting;
-    btn.textContent = connecting ? 'Connecting…' : (connected ? '+ Add device' : 'Connect');
-
-    // Simulate stays available so additional sims can be added for testing.
-
-    // Enable/disable device controls (operate on the primary).
-    document.querySelectorAll('.device-setting').forEach((el) => (el.disabled = !connected));
-    $('recordBtn').disabled = !connected;
-    // Reset Max is always available (it clears the app-side max readout).
-    if (!connected) {
-      $('battery').hidden = true;
-      $('rate').textContent = '–';
+    const menu = $('deviceList');
+    menu.innerHTML = '';
+    for (const d of devices) {
+      const row = document.createElement('div');
+      row.className = 'device-row';
+      const info = document.createElement('div');
+      const nm = document.createElement('div'); nm.className = 'device-name'; nm.textContent = d.label;
+      const kind = document.createElement('div'); kind.className = 'device-kind'; kind.textContent = d.kind || '';
+      info.append(nm, kind);
+      const x = document.createElement('button');
+      x.className = 'device-x'; x.textContent = '×'; x.title = 'Disconnect';
+      x.onclick = (e) => { e.stopPropagation(); this.h.onChannelDisconnect(d.id); };
+      row.append(info, x);
+      menu.append(row);
     }
+
+    document.querySelectorAll('.device-setting').forEach((el) => (el.disabled = n === 0));
+    $('recordBtn').disabled = n === 0;
+    if (n === 0) { $('battery').hidden = true; $('rate').textContent = '–'; this._toggleDeviceList(false); }
   }
 
   setReading(reading, absValue, showAbs) {
@@ -582,14 +593,6 @@ export class UI {
     if (unit) $('unitMax').textContent = unit;
   }
 
-  // The connected-device pill text: the device name when one is connected, or
-  // "N devices" when several. Called by app.js as channels are added/removed.
-  setDeviceSummary(count, name) {
-    const pill = $('status');
-    pill.hidden = count < 1;
-    if (count >= 1) pill.textContent = count === 1 ? (name || 'LineScale 3') : `${count} devices`;
-    if (count < 1) this.toggleDeviceMenu(false);
-  }
 
   // Render the per-channel readout strip: one card per connected channel
   // (color swatch, editable label, current value + unit, max, disconnect ×)
@@ -600,9 +603,9 @@ export class UI {
   // otherwise we just update the live value text. Rebuilding every frame would
   // recreate the buttons mid-click and they'd never fire.
   renderChannels(chans) {
-    const strip = $('channelStrip');
-    strip.hidden = chans.length === 0;
-    const sig = chans.map((c) => `${c.id}:${c.label}`).join('|');
+    // The strip always shows at least the add-device card; its text depends on
+    // whether any device is connected, so the signature includes the count.
+    const sig = chans.length + '#' + chans.map((c) => `${c.id}:${c.label}`).join('|');
     if (sig !== this._chanSig) { this._buildChannelCards(chans); this._chanSig = sig; }
     // Update live values (and the unit button) without touching the structure.
     for (const c of chans) {
@@ -618,8 +621,10 @@ export class UI {
 
   _buildChannelCards(chans) {
     const strip = $('channelStrip');
+    strip.hidden = false;
     strip.innerHTML = '';
     this._chanCards = new Map();
+
     const units = ['kN', 'kgf', 'lbf'];
     const cmdForUnit = { kN: 'UNIT_KN', kgf: 'UNIT_KGF', lbf: 'UNIT_LBF' };
     for (const c of chans) {
@@ -678,6 +683,14 @@ export class UI {
       Object.assign(refs, { cur, unitLabel, max, unitBtn });
       this._chanCards.set(c.id, refs);
     }
+
+    // Add-device card, to the right of any connected devices. Text depends on
+    // whether anything is connected yet.
+    const add = document.createElement('button');
+    add.className = 'chan-add';
+    add.innerHTML = `<span class="chan-add-icon">+</span><span class="chan-add-text">${chans.length ? 'Add Additional Device' : 'Connect Device'}</span>`;
+    add.onclick = () => this.h.onConnect();
+    strip.append(add);
   }
 
   setRecordingState(isRecording) {

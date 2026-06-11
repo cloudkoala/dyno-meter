@@ -116,6 +116,7 @@ async function main() {
   ui.init();
   ui.initSettings(settings);
   updateLiveTitle();
+  refreshDeviceUI(); // empty state: red circle + "Connect Device" card
   ui.setFsSupported(fs.fsSupported());
   // ?sim=1 auto-starts the simulated device — do this before any storage await
   // so the live UI never waits on IndexedDB.
@@ -142,6 +143,7 @@ async function addChannel(source) {
     id, source,
     label: `Channel ${idx + 1}`,
     color: CHAN_COLORS[idx % CHAN_COLORS.length],
+    kind: source instanceof Simulator ? 'Simulated device' : 'LineScale 3',
     unit: null, current: 0, max: 0, name: '',
   };
   channels.push(ch);
@@ -169,7 +171,6 @@ async function addChannel(source) {
 
 function onChannelStatus(ch, s) {
   const isPrimary = ch === channels[0];
-  if (isPrimary) ui.setStatus(s.state, s.name);
   if (s.state === 'connecting') {
     if (isPrimary) ui.resetDiag();
   } else if (s.state === 'connected') {
@@ -192,14 +193,13 @@ function removeChannel(ch) {
   refreshDeviceUI();
   if (!channels.length) {
     stopSampler();
-    ui.setStatus('disconnected');
     if (store.recording) stopRecording(); // flush any in-progress recording
   }
 }
 
-// Reflect the channel set into the device pill + per-channel strip.
+// Reflect the channel set into the connection circle/list + per-channel strip.
 function refreshDeviceUI() {
-  ui.setDeviceSummary(channels.length, channels[0]?.name);
+  ui.setDevices(channels.map((c) => ({ id: c.id, label: c.label, kind: c.kind })));
   renderChannelStrip();
 }
 

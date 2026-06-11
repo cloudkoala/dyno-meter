@@ -109,6 +109,7 @@ main {
   border-radius: 12px; padding: 10px 12px; min-width: 220px;
 }
 .chan-top { display: flex; align-items: center; gap: 10px; }
+.chan-body { flex: 1; }
 .chan-ctl { display: flex; align-items: center; gap: 6px; flex-wrap: wrap; }
 .chan-ctl .btn-sm { padding: 5px 10px; font-size: 12px; }
 .chan-unit-btn { min-width: 44px; font-variant-numeric: tabular-nums; }
@@ -117,7 +118,7 @@ main {
 .chan-label {
   background: none; border: 1px solid transparent; color: var(--text);
   font: inherit; font-size: 13px; font-weight: 600; padding: 1px 4px;
-  border-radius: 5px; width: 110px; max-width: 110px;
+  border-radius: 5px; width: 100%;
 }
 .chan-label:hover { border-color: var(--border); }
 .chan-label:focus { outline: none; border-color: var(--accent); background: var(--panel-2); }
@@ -284,20 +285,39 @@ main {
 .icon-btn-svg svg { width: 15px; height: 15px; display: block; }
 .icon-btn-svg.danger:hover { color: #fff; }
 
-/* Connected device pill + disconnect popup */
-.device-wrap { position: relative; display: inline-flex; }
-.device-pill { cursor: pointer; font: inherit; }
-.device-menu {
-  position: absolute; right: 0; top: calc(100% + 8px); min-width: 160px;
+/* Add-device card in the channel strip */
+.chan-add {
+  display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 4px;
+  background: var(--panel); border: 1px dashed var(--border); border-radius: 12px;
+  min-width: 200px; padding: 10px 14px; cursor: pointer; color: var(--muted);
+}
+.chan-add:hover { border-color: var(--accent); color: var(--accent); }
+.chan-add-icon { font-size: 24px; line-height: 1; }
+.chan-add-text { font-size: 13px; font-weight: 600; }
+
+/* Connection circle + device list (top bar) */
+.conn-wrap { position: relative; display: inline-flex; }
+.conn-circle {
+  width: 34px; height: 34px; border-radius: 50%; border: none; cursor: pointer;
+  font-size: 14px; font-weight: 700; font-variant-numeric: tabular-nums;
+  display: inline-flex; align-items: center; justify-content: center;
+}
+.conn-circle.conn-empty { background: var(--red); color: #fff; }
+.conn-circle.conn-on { background: var(--green); color: #06210f; }
+.device-list-menu {
+  position: absolute; right: 0; top: calc(100% + 8px); min-width: 230px; z-index: 30;
   background: var(--panel); border: 1px solid var(--border); border-radius: 10px;
-  padding: 6px; z-index: 30; box-shadow: 0 12px 40px rgba(0,0,0,.5);
+  padding: 6px; box-shadow: 0 12px 40px rgba(0,0,0,.5);
 }
-.device-menu-item {
-  width: 100%; text-align: left; background: none; border: none; color: var(--text);
-  padding: 8px 10px; border-radius: 6px; cursor: pointer; font-size: 14px;
+.device-row { display: flex; align-items: center; gap: 10px; padding: 7px 9px; border-radius: 7px; }
+.device-row:hover { background: #1b212b; }
+.device-name { font-size: 14px; font-weight: 600; color: var(--text); }
+.device-kind { font-size: 12px; color: var(--muted); }
+.device-x {
+  margin-left: auto; background: none; border: none; color: var(--muted);
+  font-size: 16px; line-height: 1; cursor: pointer; padding: 2px 7px; border-radius: 6px;
 }
-.device-menu-item:hover { background: #28313d; }
-.device-menu-item.danger:hover { background: var(--red); color: #fff; }
+.device-x:hover { background: var(--red); color: #fff; }
 
 /* Settings gear + popover */
 .settings-wrap { position: relative; display: inline-flex; }
