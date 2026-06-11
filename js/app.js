@@ -2,7 +2,7 @@
 
 import { BLEConnection } from './connection.js';
 import { Simulator } from './simulator.js';
-import { Store, recordingToCSV } from './store.js';
+import { Store, recordingToCSV, asChannels } from './store.js';
 import { UI } from './ui.js';
 import { absoluteForce } from './protocol.js';
 import { settings, saveSettings } from './settings.js';
@@ -23,6 +23,10 @@ let sampleTimer = null; // shared ~33 ms live-graph sampler
 let activeSessionId = null;
 let recInfoTimer = null;
 let recordingNamed = false; // did the user type a name for the active recording?
+// Map from live-channel id -> recording-channel index, fixed when recording
+// starts. Channels added mid-recording aren't in the map (ignored); removed
+// channels simply stop appending.
+let recChanIndex = new Map();
 let existingNames = new Set(); // lowercased Test ID-Sample names of saved sessions
 let folderHandle = null; // chosen session-library folder (File System Access API)
 
@@ -80,13 +84,29 @@ function metaForLive() {
     filenameBase: label || 'LineScale',
   };
 }
-function graphBlobFor(rec) {
-  return ui.graphBlob({
-    xs: rec.samples.map((s) => s.t / 1000),
-    ys: rec.samples.map((s) => s.value),
-    unit: rec.unit,
+// Build graphBlob/exportGraphPNG options for a recording, using the channels
+// normalizer so legacy single-channel recs keep the original single-series look
+// and multi-channel recs render one colored, labeled line each.
+function graphOptsFor(rec) {
+  const chans = asChannels(rec);
+  const unit = chans[0]?.unit || rec.unit;
+  if (chans.length < 2) {
+    const s = chans[0].samples;
+    return { xs: s.map((x) => x.t / 1000), ys: s.map((x) => x.value), unit, ...metaForRec(rec) };
+  }
+  return {
+    unit,
+    channels: chans.map((c, i) => ({
+      label: c.label || `Channel ${i + 1}`,
+      color: CHAN_COLORS[i % CHAN_COLORS.length],
+      xs: c.samples.map((x) => x.t / 1000),
+      ys: c.samples.map((x) => x.value),
+    })),
     ...metaForRec(rec),
-  });
+  };
+}
+function graphBlobFor(rec) {
+  return ui.graphBlob(graphOptsFor(rec));
 }
 
 async function main() {
@@ -240,7 +260,10 @@ function handleReading(ch, reading) {
   if (isPrimary) {
     ui.setReading(reading, abs, false);
     ui.setMax(ch.max, reading.unit);
-    if (store.recording) store.append(reading, abs);
+  }
+  // Record every channel that was present when recording started.
+  if (store.recording && recChanIndex.has(ch.id)) {
+    store.appendChannel(recChanIndex.get(ch.id), reading, abs);
   }
   renderChannelStrip();
 }
@@ -327,10 +350,18 @@ async function onToggleRecord(fields) {
   saveSettings();
   updateLiveTitle();
 
+  // Snapshot the currently-connected channels: one recording channel each, in
+  // channel order, with a live-id -> recording-index map for handleReading.
+  const snapshot = [...channels];
+  recChanIndex = new Map();
+  const specs = snapshot.map((c, i) => {
+    recChanIndex.set(c.id, i);
+    return { label: c.label, unit: c.unit || channels[0]?.unit || 'kN' };
+  });
   store.startRecording({
     testId: fields.testId, sample: fields.sample, config: fields.config, material: fields.material,
     name: idLabel(fields.testId, fields.sample),
-  }, channels[0]?.unit || 'kN');
+  }, specs);
   ui.setRecordingState(true);
   recInfoTimer = setInterval(updateRecInfo, 250);
   updateRecInfo();
@@ -343,7 +374,8 @@ function updateRecInfo() {
   const rec = store.current;
   if (!rec) return;
   const dur = ((Date.now() - rec.startedAt) / 1000).toFixed(1);
-  ui.setRecInfo(`recording · ${rec.samples.length} pts · ${dur}s`);
+  const pts = rec.channels.reduce((n, c) => n + c.samples.length, 0);
+  ui.setRecInfo(`recording · ${pts} pts · ${dur}s`);
 }
 
 async function stopRecording() {
@@ -366,7 +398,7 @@ async function stopRecording() {
   rec.name = idLabel(rec.testId, rec.sample) || rec.name;
 
   // Save to the active library: the folder, or browser storage.
-  if (usingFolder()) { if (rec.samples.length) await saveSessionToFolder(rec); }
+  if (usingFolder()) { if (rec.count) await saveSessionToFolder(rec); }
   else await store.persist(rec);
 
   ui.setRecInfo(`saved “${rec.name}” (${rec.count} pts)`);
@@ -505,13 +537,9 @@ async function onExportSessionGraph(id) {
     try { ui._download(await fs.readFileBlob(folderHandle, `${id}.png`), `${id}.png`); return; } catch { /* fall through */ }
   }
   const rec = await getSessionActive(id);
-  if (!rec || !rec.samples.length) { ui.toast('No data in this session', true); return; }
-  ui.exportGraphPNG({
-    xs: rec.samples.map((s) => s.t / 1000),
-    ys: rec.samples.map((s) => s.value),
-    unit: rec.unit,
-    ...metaForRec(rec),
-  });
+  const hasData = rec && asChannels(rec).some((c) => c.samples.length);
+  if (!hasData) { ui.toast('No data in this session', true); return; }
+  ui.exportGraphPNG(graphOptsFor(rec));
 }
 
 // Edit a saved session's Test ID / Sample / Material / Config.

@@ -41,6 +41,47 @@ check('duration = last t', back.duration === 500, `${back.duration}`);
 check('sample t in ms', back.samples[1].t === 250, `${back.samples[1].t}`);
 check('sample value', back.samples[1].value === 5.1, `${back.samples[1].value}`);
 check('sample abs', back.samples[1].abs === 5.0, `${back.samples[1].abs}`);
+check('single-channel returns channels[] of length 1', Array.isArray(back.channels) && back.channels.length === 1, `${back.channels?.length}`);
+check('single-channel CSV stays wide', /\btime_s,value_kN,absolute_kN\b/.test(csv));
+
+// ---- multi-channel long-format round-trip ------------------------------
+const multi = {
+  name: 'Pull-07',
+  testId: 'Pull',
+  sample: '07',
+  config: 'symmetric rig',
+  material: ['Dyneema'],
+  startedAt: Date.UTC(2026, 5, 11, 9, 0, 0),
+  channels: [
+    { label: 'Left', unit: 'kN', max: 4.0, samples: [
+      { t: 0, value: 0.41, abs: 0.39 }, { t: 250, value: 4.0, abs: 3.8 }, { t: 500, value: 0.2, abs: 0.1 },
+    ] },
+    { label: 'Right', unit: 'kN', max: 7.0, samples: [
+      { t: 0, value: 0.39, abs: 0.37 }, { t: 250, value: 7.0, abs: 6.8 }, { t: 500, value: 0.3, abs: 0.2 },
+    ] },
+  ],
+};
+const mcsv = recordingToCSV(multi);
+const mlines = mcsv.split('\n');
+const mhdr = mlines.find((l) => l.startsWith('time_s'));
+check('multi CSV header is long', mhdr === 'time_s,channel,value,absolute', mhdr);
+// Rows sorted by time ascending; ties keep channel order (Left before Right).
+const mdata = mlines.slice(mlines.indexOf(mhdr) + 1).filter(Boolean);
+check('rows sorted/grouped by time then channel', mdata[0] === '0.000,Left,0.41,0.39' && mdata[1] === '0.000,Right,0.39,0.37', `${mdata[0]} | ${mdata[1]}`);
+check('time ascending across channels', mdata[2].startsWith('0.250,Left') && mdata[3].startsWith('0.250,Right'));
+
+const mback = parseSessionCsv(mcsv, 'Pull-07');
+check('multi: two channels parsed', mback.channels.length === 2, `${mback.channels.length}`);
+check('multi: labels round-trip in order', mback.channels[0].label === 'Left' && mback.channels[1].label === 'Right');
+check('multi: units round-trip', mback.channels[0].unit === 'kN' && mback.channels[1].unit === 'kN');
+check('multi: per-channel maxes', mback.channels[0].max === 4.0 && mback.channels[1].max === 7.0, `${mback.channels[0].max}/${mback.channels[1].max}`);
+check('multi: top-level peak across channels', mback.max === 7.0, `${mback.max}`);
+check('multi: total count', mback.count === 6, `${mback.count}`);
+check('multi: samples grouped correctly', mback.channels[0].samples.length === 3 && mback.channels[1].samples[1].value === 7.0);
+check('multi: sample t in ms', mback.channels[0].samples[1].t === 250, `${mback.channels[0].samples[1].t}`);
+check('multi: sample abs preserved', mback.channels[1].samples[1].abs === 6.8, `${mback.channels[1].samples[1].abs}`);
+check('multi: metadata round-trips', mback.testId === 'Pull' && mback.sample === '07' && mback.config === 'symmetric rig');
+check('multi: duration from data', mback.duration === 500, `${mback.duration}`);
 
 // Missing max header -> recomputed from data.
 const noMax = csv.replace(/^#.*max:.*$/m, '# samples: 3');

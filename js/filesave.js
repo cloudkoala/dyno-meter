@@ -89,8 +89,9 @@ export async function saveFiles(dir, name, files) {
 export function parseSessionCsv(text, baseName) {
   const lines = text.split(/\r?\n/);
   let name = baseName, startedAt = 0, unit = 'kN', max = 0;
-  let testId = '', sample = '', config = '', material = '';
-  const samples = [];
+  let testId = '', sample = '', config = '', material = '', channelHdr = '';
+  let format = null; // 'wide' | 'long' (detected from the column-header line)
+  const dataLines = [];
   for (const line of lines) {
     if (!line) continue;
     if (line[0] === '#') {
@@ -100,24 +101,91 @@ export function parseSessionCsv(text, baseName) {
       else if ((m = line.match(/^#\s*sample:\s*(.*)$/))) sample = m[1].trim();
       else if ((m = line.match(/^#\s*configuration:\s*(.*)$/))) config = m[1].trim();
       else if ((m = line.match(/^#\s*material:\s*(.*)$/))) material = m[1].trim();
+      else if ((m = line.match(/^#\s*channels:\s*(.*)$/))) channelHdr = m[1].trim();
       else if ((m = line.match(/^#\s*started:\s*(.*)$/))) { const d = Date.parse(m[1].trim()); if (!Number.isNaN(d)) startedAt = d; }
       else if ((m = line.match(/^#\s*unit:\s*(.*)$/))) unit = m[1].trim() || unit;
       else if ((m = line.match(/max:\s*([-\d.]+)/))) max = parseFloat(m[1]) || max;
       continue;
     }
-    if (line.startsWith('time_s')) continue; // column header
-    const p = line.split(',');
-    const t = parseFloat(p[0]), v = parseFloat(p[1]);
-    if (!Number.isFinite(t) || !Number.isFinite(v)) continue;
-    const a = p.length > 2 ? parseFloat(p[2]) : v;
-    samples.push({ t: t * 1000, value: v, abs: Number.isFinite(a) ? a : v });
+    if (line.startsWith('time_s')) {
+      // Detect format from the column-header line.
+      format = /^time_s,channel,/.test(line) ? 'long' : 'wide';
+      continue;
+    }
+    dataLines.push(line);
   }
-  const count = samples.length;
-  const duration = count ? samples[count - 1].t - samples[0].t : 0;
-  if (!max) for (const s of samples) if (s.value > max) max = s.value;
   const materials = material ? material.split(';').map((x) => x.trim()).filter(Boolean) : [];
-  return { id: baseName, name, testId, sample, config, material: materials,
-    startedAt, endedAt: startedAt + duration, unit, max, count, duration, samples };
+
+  let channels;
+  if (format === 'long') {
+    channels = parseLongRows(dataLines, channelHdr, unit);
+  } else {
+    // Wide (single channel) — preserve the original parsing exactly.
+    const samples = [];
+    for (const line of dataLines) {
+      const p = line.split(',');
+      const t = parseFloat(p[0]), v = parseFloat(p[1]);
+      if (!Number.isFinite(t) || !Number.isFinite(v)) continue;
+      const a = p.length > 2 ? parseFloat(p[2]) : v;
+      samples.push({ t: t * 1000, value: v, abs: Number.isFinite(a) ? a : v });
+    }
+    let cmax = 0;
+    for (const s of samples) if (s.value > cmax) cmax = s.value;
+    channels = [{ label: '', unit, max: cmax, samples }];
+  }
+
+  // Derived totals across channels.
+  let lastT = 0, firstT = Infinity, peak = 0, count = 0;
+  for (const c of channels) {
+    if (c.max > peak) peak = c.max;
+    count += c.samples.length;
+    for (const s of c.samples) { if (s.t > lastT) lastT = s.t; if (s.t < firstT) firstT = s.t; }
+  }
+  if (!Number.isFinite(firstT)) firstT = 0;
+  const duration = count ? lastT - firstT : 0;
+  if (!max) max = peak; else if (peak > max) max = peak;
+
+  // Single-channel return keeps the legacy flat fields the existing
+  // code/tests rely on; channels[] is always present for uniform callers.
+  const primary = channels[0];
+  return {
+    id: baseName, name, testId, sample, config, material: materials,
+    startedAt, endedAt: startedAt + duration, unit, max, count, duration,
+    channels, samples: primary.samples,
+  };
+}
+
+// Parse long-format data rows into channels[], grouped/ordered by the
+// `# channels:` header (which fixes label + order); rows for unlisted labels
+// are appended in first-seen order.
+function parseLongRows(dataLines, channelHdr, unit) {
+  const labels = channelHdr ? channelHdr.split(';').map((x) => x.trim()).filter(Boolean) : [];
+  const byLabel = new Map();
+  const ensure = (label) => {
+    let c = byLabel.get(label);
+    if (!c) { c = { label, unit, max: 0, samples: [] }; byLabel.set(label, c); }
+    return c;
+  };
+  for (const label of labels) ensure(label); // seed order from header
+  for (const line of dataLines) {
+    // value/abs are numeric; channel is everything between the first comma and
+    // the last two commas (so labels containing commas would still need quoting,
+    // but our labels are sanitized).
+    const first = line.indexOf(',');
+    if (first === -1) continue;
+    const lastComma = line.lastIndexOf(',');
+    const secondLast = line.lastIndexOf(',', lastComma - 1);
+    const t = parseFloat(line.slice(0, first));
+    const label = line.slice(first + 1, secondLast);
+    const v = parseFloat(line.slice(secondLast + 1, lastComma));
+    const a = parseFloat(line.slice(lastComma + 1));
+    if (!Number.isFinite(t) || !Number.isFinite(v)) continue;
+    const c = ensure(label);
+    const av = Number.isFinite(a) ? a : v;
+    c.samples.push({ t: t * 1000, value: v, abs: av });
+    if (v > c.max) c.max = v;
+  }
+  return [...byLabel.values()];
 }
 
 export async function listSessions(dir) {
@@ -129,6 +197,7 @@ export async function listSessions(dir) {
       const rec = parseSessionCsv(await (await entry.getFile()).text(), base);
       out.push({ id: base, name: rec.name, startedAt: rec.startedAt, endedAt: rec.endedAt,
         unit: rec.unit, max: rec.max, count: rec.count, duration: rec.duration,
+        channelCount: rec.channels.length,
         config: rec.config, material: rec.material });
     } catch { /* skip unreadable files */ }
   }

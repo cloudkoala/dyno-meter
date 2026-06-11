@@ -3,6 +3,10 @@
 // BLE or storage.
 
 import { MultiSelect } from './multiselect.js';
+import { asChannels } from './store.js';
+
+// Colors for multi-channel session rendering / PNG export (mirrors app.js).
+const CHAN_COLORS = ['#3fb6ff', '#ffb020', '#2ec36a', '#ff5252', '#b06fff', '#ff8f3f'];
 
 // Display helper: material is a list; join for single-line display.
 const matStr = (m) => (Array.isArray(m) ? m.join(', ') : (m || ''));
@@ -306,16 +310,32 @@ export class UI {
 
   showSession(rec) {
     this.viewMode = 'session';
-    this.unit = rec.unit;
+    const channels = asChannels(rec);
+    this.unit = channels[0]?.unit || rec.unit;
     this.sessionName = rec.name;
     this._setPauseBadge(false);
-    const xs = rec.samples.map((s) => s.t / 1000);
-    const ys = rec.samples.map((s) => s.value);
-    // Session view uses a single "load" series — rebuild since live may have many.
-    this._buildChart(
-      [{ label: 'time (s)' }, { label: 'load', stroke: '#3fb6ff', width: 1.6, points: { show: false } }],
-      [xs.length ? xs : [0], ys.length ? ys : [0]],
-    );
+
+    // One line per channel. Channels are recorded on a shared clock but their
+    // sample timestamps may differ slightly, so build a union x-axis (sorted
+    // unique times) and align each channel's y onto it (null where it has no
+    // sample at that time — uPlot just leaves a gap, which is fine here).
+    const single = channels.length < 2;
+    const label = (c, i) => (single ? 'load' : (c.label || `Channel ${i + 1}`));
+    const color = (i) => (single ? '#3fb6ff' : CHAN_COLORS[i % CHAN_COLORS.length]);
+
+    const xset = new Set();
+    for (const c of channels) for (const s of c.samples) xset.add(s.t);
+    const xs = [...xset].sort((a, b) => a - b);
+    const series = [{ label: 'time (s)' }];
+    const data = [xs.length ? xs.map((t) => t / 1000) : [0]];
+    channels.forEach((c, i) => {
+      const m = new Map(c.samples.map((s) => [s.t, s.value]));
+      const ys = xs.map((t) => (m.has(t) ? m.get(t) : null));
+      series.push({ label: label(c, i), stroke: color(i), width: 1.6, points: { show: false } });
+      data.push(ys.length ? ys : [0]);
+    });
+    if (data.length === 1) data.push([0]); // no channels: keep a placeholder series
+    this._buildChart(series, data);
     this._renderHeader({ id: rec.name, config: rec.config, material: matStr(rec.material) });
     $('liveBtn').hidden = false;
     // In a saved session, only Back-to-Live + Export apply.
@@ -387,24 +407,48 @@ export class UI {
 
   // Render the given series to an annotated PNG and resolve with a Blob.
   // meta: { config, material, idLabel, datetime } drawn in a header band.
-  graphBlob({ xs, ys, unit, config = '', material = '', idLabel = '', datetime = '' }) {
+  // Accepts EITHER a single series ({ xs, ys, unit }) — unchanged look — OR
+  // multiple channels ({ channels: [{ label, color, xs, ys }], unit }) drawn as
+  // colored lines with a legend and per-channel max in the header.
+  graphBlob({ xs, ys, unit, channels, config = '', material = '', idLabel = '', datetime = '' }) {
+    // Normalize to a channels array. Single-series call -> one channel that
+    // renders with the original styling (filled blue line, no legend).
+    const single = !channels || channels.length < 2;
+    const chans = (channels && channels.length)
+      ? channels
+      : [{ label: '', color: '#3fb6ff', xs: xs || [], ys: ys || [] }];
+
     return new Promise((resolve, reject) => {
-      if (!xs || !xs.length) { reject(new Error('No data to graph')); return; }
+      if (!chans.some((c) => c.xs && c.xs.length)) { reject(new Error('No data to graph')); return; }
       const W = 1200, H = 600;
       const holder = document.createElement('div');
       holder.style.cssText = `position:fixed;left:-99999px;top:0;width:${W}px;height:${H}px;`;
       document.body.appendChild(holder);
 
+      // Build a union x-axis so every channel aligns on one time scale.
+      const xset = new Set();
+      for (const c of chans) for (const x of c.xs) xset.add(x);
+      const ux = [...xset].sort((a, b) => a - b);
+      const series = [{}];
+      const data = [ux];
+      chans.forEach((c, i) => {
+        const m = new Map(c.xs.map((x, j) => [x, c.ys[j]]));
+        data.push(ux.map((x) => (m.has(x) ? m.get(x) : null)));
+        series.push(single
+          ? { stroke: c.color, width: 2, fill: 'rgba(63,182,255,0.12)', points: { show: false } }
+          : { stroke: c.color || CHAN_COLORS[i % CHAN_COLORS.length], width: 2, points: { show: false } });
+      });
+
       let u;
       try {
         u = new uPlot({
           width: W, height: H, scales: { x: { time: false } }, legend: { show: false }, cursor: { show: false },
-          series: [{}, { stroke: '#3fb6ff', width: 2, fill: 'rgba(63,182,255,0.12)', points: { show: false } }],
+          series,
           axes: [
             { stroke: '#8b97a6', grid: { stroke: '#2b3340', width: 1 } },
             { stroke: '#8b97a6', grid: { stroke: '#2b3340', width: 1 } },
           ],
-        }, [xs, ys], holder);
+        }, data, holder);
       } catch (e) {
         holder.remove();
         reject(e);
@@ -416,8 +460,8 @@ export class UI {
         try {
           const src = holder.querySelector('canvas');
           const dpr = src.width / W;
-          let max = -Infinity;
-          for (const v of ys) if (v > max) max = v;
+          const maxOf = (c) => { let mx = -Infinity; for (const v of c.ys) if (v != null && v > mx) mx = v; return mx; };
+          const peak = Math.max(...chans.map(maxOf));
 
           const out = document.createElement('canvas');
           out.width = src.width; out.height = src.height;
@@ -426,16 +470,17 @@ export class UI {
           ctx.drawImage(src, 0, 0);
 
           const font = (px, weight = '') => `${weight} ${Math.round(px * dpr)}px -apple-system, sans-serif`.trim();
-          const dur = xs.length ? xs[xs.length - 1] : 0;
+          let dur = 0;
+          for (const c of chans) if (c.xs.length) dur = Math.max(dur, c.xs[c.xs.length - 1]);
 
           // Translucent header band across the top for legibility.
           ctx.fillStyle = 'rgba(10,13,18,0.72)';
           ctx.fillRect(0, 0, out.width, 96 * dpr);
 
-          // Left: MAX readout + duration.
+          // Left: MAX readout (peak across channels) + duration.
           ctx.textAlign = 'left';
           ctx.fillStyle = '#8b97a6'; ctx.font = font(13); ctx.fillText('MAX', 18 * dpr, 26 * dpr);
-          ctx.fillStyle = '#ffb020'; ctx.font = font(30, '700'); ctx.fillText(`${max.toFixed(2)} ${unit}`, 18 * dpr, 60 * dpr);
+          ctx.fillStyle = '#ffb020'; ctx.font = font(30, '700'); ctx.fillText(`${peak.toFixed(2)} ${unit}`, 18 * dpr, 60 * dpr);
           ctx.fillStyle = '#8b97a6'; ctx.font = font(12); ctx.fillText(`${dur.toFixed(1)} s`, 18 * dpr, 82 * dpr);
 
           // Center: Configuration (large) + Material (subtitle).
@@ -450,6 +495,24 @@ export class UI {
           if (idLabel) { ctx.fillStyle = '#e6edf3'; ctx.font = font(20, '700'); ctx.fillText(idLabel, rx, 38 * dpr); }
           if (datetime) { ctx.fillStyle = '#8b97a6'; ctx.font = font(13); ctx.fillText(datetime, rx, 62 * dpr); }
           ctx.textAlign = 'left';
+
+          // Multi-channel: a legend of colored labels + per-channel max,
+          // bottom-left so it doesn't collide with the header band.
+          if (!single) {
+            let ly = out.height - (18 + 18 * (chans.length - 1)) * dpr;
+            ctx.textAlign = 'left';
+            chans.forEach((c, i) => {
+              const col = c.color || CHAN_COLORS[i % CHAN_COLORS.length];
+              ctx.fillStyle = col;
+              ctx.fillRect(18 * dpr, ly - 9 * dpr, 12 * dpr, 12 * dpr);
+              ctx.font = font(13, '600');
+              const mx = maxOf(c);
+              const txt = `${c.label || `Channel ${i + 1}`} — ${(mx === -Infinity ? 0 : mx).toFixed(2)} ${unit}`;
+              ctx.fillStyle = '#e6edf3';
+              ctx.fillText(txt, 36 * dpr, ly + 2 * dpr);
+              ly += 18 * dpr;
+            });
+          }
 
           out.toBlob((blob) => (blob ? resolve(blob) : reject(new Error('PNG encode failed'))));
         } catch (e) {
@@ -621,7 +684,8 @@ export class UI {
       // Max load / Test ID - Sample.
       const stats = document.createElement('div');
       stats.className = 'sess-stats';
-      stats.append(mk('sess-max', `${s.max.toFixed(2)} ${s.unit}`), mk('sess-dur', s.name));
+      const nameTxt = s.channelCount > 1 ? `${s.name} · ${s.channelCount} ch` : s.name;
+      stats.append(mk('sess-max', `${s.max.toFixed(2)} ${s.unit}`), mk('sess-dur', nameTxt));
 
       const actions = document.createElement('div');
       actions.className = 'session-actions';
