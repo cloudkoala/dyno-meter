@@ -6,26 +6,27 @@
 // arrive between start and stop into a single .mp4 Blob (the app then saves it to the
 // session folder). Knows nothing about force data or storage.
 
-// ---- minimal MP4 box helpers (for tfdt rebasing so a mid-stream recording starts at 0) --
-function indexOfType(u8, type) {
-  // Find the byte offset of a 4-char box type (e.g. 'tfdt').
-  const a = type.charCodeAt(0), b = type.charCodeAt(1), c = type.charCodeAt(2), d = type.charCodeAt(3);
-  for (let i = 0; i + 3 < u8.length; i++) if (u8[i] === a && u8[i + 1] === b && u8[i + 2] === c && u8[i + 3] === d) return i;
-  return -1;
+// ---- minimal MP4 box helpers (rebase tfdt so a mid-stream recording starts at 0) --------
+// A fragment (moof+mdat) has one tfdt per track (video + audio), each in its own
+// timescale. We zero each track independently by its first-seen value (matched by
+// ordinal position, which ffmpeg keeps consistent across fragments) — that keeps the
+// tracks in sync and avoids a long blank lead in the saved file.
+function tfdtBoxes(frag) {
+  const out = [];
+  for (let j = 0; j + 7 < frag.length; j++) {
+    if (frag[j] === 0x74 && frag[j + 1] === 0x66 && frag[j + 2] === 0x64 && frag[j + 3] === 0x74) {
+      out.push({ pos: j, version: frag[j + 4] }); // [type][version(1)+flags(3)][baseMediaDecodeTime]
+      j += 4;
+    }
+  }
+  return out;
 }
-function readTfdt(frag) {
-  const i = indexOfType(frag, 'tfdt');
-  if (i < 0) return null;
+function tfdtValue(frag, t) {
   const dv = new DataView(frag.buffer, frag.byteOffset, frag.byteLength);
-  const version = frag[i + 4]; // after the 4-char type: version(1)+flags(3)
-  const value = version === 1 ? dv.getUint32(i + 8) * 2 ** 32 + dv.getUint32(i + 12) : dv.getUint32(i + 8);
-  return { pos: i, version, value };
+  return t.version === 1 ? dv.getUint32(t.pos + 8) * 2 ** 32 + dv.getUint32(t.pos + 12) : dv.getUint32(t.pos + 8);
 }
-function rebaseTfdt(frag, offset) {
-  // Subtract `offset` from the fragment's baseMediaDecodeTime (in place).
-  const t = readTfdt(frag);
-  if (!t) return;
-  const v = Math.max(0, t.value - offset);
+function tfdtWrite(frag, t, v) {
+  v = Math.max(0, v);
   const dv = new DataView(frag.buffer, frag.byteOffset, frag.byteLength);
   if (t.version === 1) { dv.setUint32(t.pos + 8, Math.floor(v / 2 ** 32)); dv.setUint32(t.pos + 12, v >>> 0); }
   else dv.setUint32(t.pos + 8, v >>> 0);
@@ -43,7 +44,7 @@ export class CameraFeed {
     this.queue = [];          // fragments pending append to the SourceBuffer
     this.recording = false;
     this.recParts = null;     // [init, ...fragments] while recording
-    this._recOffset = null;   // tfdt of the first recorded fragment (rebased to 0)
+    this._recOffsets = null;  // per-track first tfdt values (rebased to 0)
     this._wantOpen = false;
     this._retry = null;
     this._statusCbs = [];
@@ -132,8 +133,9 @@ export class CameraFeed {
     if (this.sb) { this.queue.push(buf); this._flush(); }
     if (this.recording) {
       const r = buf.slice();
-      if (this._recOffset === null) { const t = readTfdt(r); this._recOffset = t ? t.value : 0; }
-      rebaseTfdt(r, this._recOffset);
+      const boxes = tfdtBoxes(r);
+      if (this._recOffsets === null) this._recOffsets = boxes.map((t) => tfdtValue(r, t));
+      boxes.forEach((t, k) => tfdtWrite(r, t, tfdtValue(r, t) - (this._recOffsets[k] || 0)));
       this.recParts.push(r);
     }
   }
@@ -161,7 +163,7 @@ export class CameraFeed {
   startRecording() {
     if (!this.initSeg) return false;
     this.recParts = [this.initSeg.slice()];
-    this._recOffset = null;
+    this._recOffsets = null;
     this.recording = true;
     return true;
   }

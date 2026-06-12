@@ -97,10 +97,11 @@ export class UI {
     });
     $('liveBtn').onclick = () => this.showLive();
 
-    // Camera live feed (fed by the local GoPro bridge).
+    // Camera live feed (fed by the local GoPro bridge). Connect/disconnect lives
+    // in the top-bar "+" device menu alongside the LineScale/Enforcer options.
     this.camera.attach($('cameraVideo'));
     this.camera.onStatus((s) => this._onCameraStatus(s));
-    $('cameraConnectBtn').onclick = () => this._toggleCamera();
+    $('cameraMute').onclick = () => { const v = $('cameraVideo'); v.muted = !v.muted; this._updateMuteLabel(); };
     $('setCameraUrl').onchange = () => this.h.onSetting('cameraBridgeUrl', ($('setCameraUrl').value || '').trim());
     $('setCameraAuto').onchange = () => this.h.onSetting('cameraAutoConnect', $('setCameraAuto').checked);
 
@@ -291,6 +292,10 @@ export class UI {
     if (this.chart) this.chart.setSize({ width: this._chartWidth(), height: 340 });
   }
 
+  // Re-fit the chart after a layout change (e.g. the camera panel showing/hiding
+  // beside it changes the chart's width) — uPlot only auto-resizes on window resize.
+  _fitChartSoon() { requestAnimationFrame(() => this._resizeChart()); }
+
   // Append one sampled frame: a shared timestamp plus each channel's latest
   // value (null before a channel has produced data). Called on a fixed timer
   // by app.js, replacing the old per-reading pushLive.
@@ -371,7 +376,7 @@ export class UI {
     // Show the session's recorded clip (if any) in the camera panel; otherwise
     // stop the live feed display while viewing history.
     if (rec.videoBlob) this.playSessionVideo(rec.videoBlob);
-    else { this.camera.clearPlayback(); $('cameraVideo').hidden = true; }
+    else { this.camera.clearPlayback(); $('chartCam').hidden = true; this._fitChartSoon(); }
   }
 
   showLive() {
@@ -386,7 +391,8 @@ export class UI {
     // Restore the live camera feed (a session view may have shown a recording).
     this.camera.clearPlayback();
     if (this._cameraWanted) this.camera.connect(this._cameraUrl);
-    else $('cameraVideo').hidden = true;
+    else { $('chartCam').hidden = true; }
+    this._fitChartSoon();
     this.h.onSelectSession(null);
   }
 
@@ -397,15 +403,15 @@ export class UI {
   }
 
   _onCameraStatus(s) {
-    const txt = { connecting: 'connecting…', connected: 'connected', live: 'live', disconnected: 'not connected', error: s.message || 'error' };
-    const el = $('cameraStatus');
-    el.textContent = txt[s.state] || s.state;
-    el.classList.toggle('err', s.state === 'error');
-    const busy = s.state === 'live' || s.state === 'connected' || s.state === 'connecting';
-    $('cameraConnectBtn').textContent = busy ? 'Disconnect camera' : 'Connect camera';
-    if (s.state === 'live') $('cameraVideo').hidden = false;
-    else if ((s.state === 'disconnected' || s.state === 'error') && this.viewMode !== 'session') $('cameraVideo').hidden = true;
+    if (s.state === 'live') { $('chartCam').hidden = false; this._updateMuteLabel(); this._fitChartSoon(); }
+    else if ((s.state === 'disconnected' || s.state === 'error') && this.viewMode !== 'session') {
+      $('chartCam').hidden = true; this._fitChartSoon();
+    }
+    if (s.state === 'error') this.toast(s.message || 'Camera bridge not reachable', true);
+    this._renderDeviceMenu(); // reflect connect/disconnect in the "+" menu
   }
+
+  _updateMuteLabel() { $('cameraMute').textContent = $('cameraVideo').muted ? '🔇' : '🔊'; }
 
   connectCamera() { this._toggleCamera(true); }
 
@@ -414,12 +420,13 @@ export class UI {
   cameraStartRec() { return this.camera.startRecording(); }
   cameraStopRec() { return this.camera.stopRecording(); }
 
-  // Play a saved session's recorded clip in the camera panel.
+  // Play a saved session's recorded clip beside the chart.
   playSessionVideo(blob) {
     this.camera.showBlob(blob);
-    $('cameraVideo').hidden = false;
-    $('cameraStatus').textContent = 'recording playback';
-    $('cameraConnectBtn').textContent = 'Connect camera';
+    $('chartCam').hidden = false;
+    this._updateMuteLabel();
+    this._renderDeviceMenu();
+    this._fitChartSoon();
   }
 
   // Live header (Test ID-Sample + config/material). Applied only while viewing
@@ -605,20 +612,28 @@ export class UI {
   // ---- readouts ----------------------------------------------------------
 
   // Connection circle + device menu. `devices` = [{ id, label, kind }].
-  // The circle shows "+" when empty, the count when connected. Clicking it opens
-  // a menu to add a device (LineScale 3 / Rock Exotica Enforcer) and, when any
-  // are connected, to disconnect them (red ×).
   setDevices(devices) {
     this._devices = devices;
-    const n = devices.length;
+    this._renderDeviceMenu();
+  }
+
+  // Build the connection menu: add options (LineScale 3 / Rock Exotica Enforcer /
+  // Camera) and the list of connected things — force devices and the camera —
+  // each with a red × to disconnect. The circle shows "+" when nothing's
+  // connected, otherwise the count. Re-rendered on device OR camera changes.
+  _renderDeviceMenu() {
+    const devices = this._devices || [];
+    const n = devices.length;                 // force devices — gate recording/settings
+    const camOn = this.camera.isConnected();
+    const total = n + (camOn ? 1 : 0);
+
     const circle = $('connCircle');
-    circle.textContent = n > 0 ? String(n) : '+';
-    circle.title = n > 0 ? 'Devices' : 'Connect a device';
+    circle.textContent = total > 0 ? String(total) : '+';
+    circle.title = total > 0 ? 'Devices' : 'Connect a device';
 
     const menu = $('deviceList');
     menu.innerHTML = '';
 
-    // Add-device choices.
     const addGroup = document.createElement('div');
     addGroup.className = 'device-add-group';
     const mkAdd = (label, fn) => {
@@ -632,27 +647,27 @@ export class UI {
       mkAdd('LineScale 3', () => this.h.onConnect()),
       mkAdd('Rock Exotica Enforcer', () => this.h.onConnectEnforcer()),
     );
+    if (!camOn) addGroup.append(mkAdd('Camera (GoPro)', () => this._toggleCamera(true)));
     menu.append(addGroup);
 
-    // Connected devices (with disconnect ×).
-    if (n) {
+    if (total) {
       const hdr = document.createElement('div');
       hdr.className = 'device-list-hdr';
       hdr.textContent = 'Connected';
       menu.append(hdr);
-      for (const d of devices) {
-        const row = document.createElement('div');
-        row.className = 'device-row';
+      const mkRow = (label, kind, onX) => {
+        const row = document.createElement('div'); row.className = 'device-row';
         const info = document.createElement('div');
-        const nm = document.createElement('div'); nm.className = 'device-name'; nm.textContent = d.label;
-        const kind = document.createElement('div'); kind.className = 'device-kind'; kind.textContent = d.kind || '';
-        info.append(nm, kind);
+        const nm = document.createElement('div'); nm.className = 'device-name'; nm.textContent = label;
+        const k = document.createElement('div'); k.className = 'device-kind'; k.textContent = kind || '';
+        info.append(nm, k);
         const x = document.createElement('button');
         x.className = 'device-x'; x.textContent = '×'; x.title = 'Disconnect';
-        x.onclick = (e) => { e.stopPropagation(); this.h.onChannelDisconnect(d.id); };
-        row.append(info, x);
-        menu.append(row);
-      }
+        x.onclick = (e) => { e.stopPropagation(); onX(); };
+        row.append(info, x); menu.append(row);
+      };
+      for (const d of devices) mkRow(d.label, d.kind, () => this.h.onChannelDisconnect(d.id));
+      if (camOn) mkRow('Camera', 'GoPro feed', () => this._toggleCamera());
     }
 
     document.querySelectorAll('.device-setting').forEach((el) => (el.disabled = n === 0));

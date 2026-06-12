@@ -79,16 +79,6 @@
   <main>
     <section id="deviceBars" class="device-bars"></section>
 
-    <section id="cameraPanel" class="camera-panel">
-      <div class="camera-head">
-        <strong>Camera</strong>
-        <span id="cameraStatus" class="muted">not connected</span>
-        <span class="spacer"></span>
-        <button id="cameraConnectBtn" class="btn btn-sm">Connect camera</button>
-      </div>
-      <video id="cameraVideo" class="camera-video" muted autoplay playsinline hidden></video>
-    </section>
-
     <section class="record-bar">
       <div class="field-group">
         <div class="field field-testid">
@@ -130,7 +120,13 @@
         <div id="chartId" class="chart-id">Live</div>
       </div>
       <div id="pauseBadge" class="pause-badge" hidden>⏸ Paused — move cursor off graph to resume</div>
-      <div id="chart"></div>
+      <div class="chart-stage">
+        <div id="chart"></div>
+        <div id="chartCam" class="chart-cam" hidden>
+          <video id="cameraVideo" muted autoplay playsinline></video>
+          <button id="cameraMute" class="cam-mute" title="Toggle sound" aria-label="Toggle sound">🔇</button>
+        </div>
+      </div>
       <div class="chart-footer">
         <button id="clearGraphBtn" class="btn">Clear</button>
         <button id="exportGraphBtn" class="btn btn-icon" title="Share / export graph">
