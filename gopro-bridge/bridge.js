@@ -90,10 +90,15 @@ function makeBoxSplitter(onInit, onFragment) {
 // so the browser's SourceBuffer is created with the exact profile/level ffmpeg produced.
 function codecFromInit(init) {
   const i = init.indexOf('avcC', 0, 'latin1');
-  if (i < 0) return 'avc1.42E01E';
-  const p = i + 4; // avcC payload: [version][profile][compat][level]...
-  const hex = (b) => b.toString(16).padStart(2, '0');
-  return `avc1.${hex(init[p + 1])}${hex(init[p + 2])}${hex(init[p + 3])}`.toUpperCase().replace('AVC1', 'avc1');
+  let video = 'avc1.42E01E';
+  if (i >= 0) {
+    const p = i + 4; // avcC payload: [version][profile][compat][level]...
+    const hex = (b) => b.toString(16).padStart(2, '0');
+    video = `avc1.${hex(init[p + 1])}${hex(init[p + 2])}${hex(init[p + 3])}`.toUpperCase().replace('AVC1', 'avc1');
+  }
+  // If the init segment carries an audio track (mp4a), advertise AAC-LC too.
+  const hasAudio = init.indexOf('mp4a', 0, 'latin1') >= 0;
+  return hasAudio ? `${video}, mp4a.40.2` : video;
 }
 
 // ---- ffmpeg: UDP MPEG-TS -> fMP4 on stdout ---------------------------------------------
@@ -102,9 +107,9 @@ function startFfmpeg(onData, onExit) {
     '-hide_banner', '-loglevel', 'warning',
     '-fflags', 'nobuffer', '-flags', 'low_delay',
     '-i', `udp://@:${UDP_PORT}?overrun_nonfatal=1&fifo_size=50000000`,
-    '-an',
     '-c:v', 'libx264', '-preset', 'veryfast', '-tune', 'zerolatency',
     '-profile:v', 'baseline', '-pix_fmt', 'yuv420p',
+    '-c:a', 'aac', '-b:a', '128k', // include audio if the source has it
     '-g', '30', '-force_key_frames', 'expr:gte(t,n_forced*1)', // keyframe ~every 1s
     '-movflags', '+frag_keyframe+empty_moov+default_base_moof+omit_tfhd_offset',
     '-flush_packets', '1', // emit each fragment to the pipe immediately (low latency)

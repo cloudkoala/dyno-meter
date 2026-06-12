@@ -26,9 +26,9 @@ records it alongside the force CSV/PNG.
 Feed a synthetic stream and run the bridge with GoPro control off:
 
 ```bash
-# Terminal 1 — fake camera (moving test pattern) as UDP MPEG-TS:
-ffmpeg -re -f lavfi -i testsrc=size=1280x720:rate=30 -c:v libx264 -tune zerolatency \
-  -pix_fmt yuv420p -f mpegts udp://127.0.0.1:8554
+# Terminal 1 — fake camera (moving test pattern + 1 kHz tone) as UDP MPEG-TS:
+ffmpeg -re -f lavfi -i testsrc=size=1280x720:rate=30 -f lavfi -i sine=frequency=1000 \
+  -c:v libx264 -tune zerolatency -pix_fmt yuv420p -c:a aac -f mpegts udp://127.0.0.1:8554
 
 # Terminal 2 — bridge, GoPro control disabled:
 GOPRO=0 node bridge.js
