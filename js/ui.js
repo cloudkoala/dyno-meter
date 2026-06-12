@@ -658,11 +658,16 @@ export class UI {
       sw.oninput = () => this.h.onChannelColor(c.id, sw.value);
       const idText = document.createElement('div');
       idText.className = 'dev-idtext';
-      const label = document.createElement('input');
+      // Editable name as a contenteditable div so a long name can wrap to two
+      // lines (an <input> can't), freeing horizontal room for the readouts.
+      const label = document.createElement('div');
       label.className = 'dev-name';
-      label.value = c.label;
+      label.contentEditable = 'true';
+      label.spellcheck = false;
+      label.textContent = c.label;
       label.title = 'Rename device';
-      label.onchange = () => this.h.onChannelLabel(c.id, label.value.trim() || c.label);
+      label.onblur = () => this.h.onChannelLabel(c.id, label.textContent.trim() || c.label);
+      label.onkeydown = (e) => { if (e.key === 'Enter') { e.preventDefault(); label.blur(); } };
       const kind = document.createElement('div');
       kind.className = 'dev-kind';
       kind.textContent = c.kind || '';
@@ -710,9 +715,10 @@ export class UI {
         meta.append(battRO.box);
       }
 
-      // Thin partial divider between adjacent sections.
-      const mkDiv = () => { const d = document.createElement('div'); d.className = 'dev-divider'; return d; };
-      readouts.append(curRO.box, mkDiv(), maxRO.box, mkDiv(), meta);
+      // Thin partial divider between adjacent sections. The one before the
+      // rate/battery column is tagged so it hides together with that column.
+      const mkDiv = (extra) => { const d = document.createElement('div'); d.className = 'dev-divider' + (extra ? ' ' + extra : ''); return d; };
+      readouts.append(curRO.box, mkDiv(), maxRO.box, mkDiv('dev-div-meta'), meta);
 
       // Controls: settings gear (Zero / Tare / Reset menu) + disconnect ×.
       const ctl = document.createElement('div');
