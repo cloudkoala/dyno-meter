@@ -23,8 +23,11 @@ const UNIT_CMD = { kN: 'UNIT_KN', kgf: 'UNIT_KGF', lbf: 'UNIT_LBF' };
 let channels = [];     // [{ id, source, label, color, kind, unit, current, max, rate, battery, overloaded, name }]
 let connection = null; // = channels[0]?.source
 let nextChanId = 1;
-let deviceSeq = 0;     // running count of devices added, for default names
 let sampleTimer = null; // shared ~33 ms live-graph sampler
+
+// Channels that have finished connecting — the only ones shown in the UI /
+// charted / sampled (a connecting device isn't displayed until it succeeds).
+function connectedChannels() { return channels.filter((c) => c.connected); }
 
 let activeSessionId = null;
 let recInfoTimer = null;
@@ -146,14 +149,18 @@ async function main() {
 // Add a new channel for the given source, wire its events, and connect it.
 async function addChannel(source) {
   const id = nextChanId++;
-  const idx = channels.length;
   const kind = source.deviceLabel || 'Device';
-  const n = ++deviceSeq; // single-digit device number for the default name
+  // Smallest unused number for this device kind, so removing #1 frees it for the
+  // next device of that kind (instead of monotonically counting up).
+  const usedNums = new Set(channels.filter((c) => c.kind === kind).map((c) => c.seq));
+  let n = 1; while (usedNums.has(n)) n++;
+  // Smallest unused line color across all current channels (kept distinct).
+  const usedColors = new Set(channels.map((c) => c.color));
+  const color = CHAN_COLORS.find((c) => !usedColors.has(c)) || CHAN_COLORS[channels.length % CHAN_COLORS.length];
   const ch = {
-    id, source,
+    id, source, seq: n,
     label: `${kind} #${n}`,
-    color: CHAN_COLORS[idx % CHAN_COLORS.length],
-    kind,
+    color, kind, connected: false,
     unit: null, current: 0, max: 0, rate: null, battery: null, overloaded: false, name: '',
   };
   channels.push(ch);
@@ -168,9 +175,8 @@ async function addChannel(source) {
     if (d.raw) console.debug('[LS3] raw', d.raw.hex, '·', d.raw.ascii);
   });
 
-  ui.setChannels(channels);
-  renderChannelStrip();
-  startSampler();
+  // The device panel, chart series, and sampler only appear once the device
+  // actually connects (see onChannelStatus) — not while connecting.
   try {
     await source.connect();
     // Force the new device to the global unit so all devices match. Devices that
@@ -191,8 +197,11 @@ function onChannelStatus(ch, s) {
     if (isPrimary) ui.resetDiag();
   } else if (s.state === 'connected') {
     ch.name = s.name || ch.kind;
+    ch.connected = true; // now reveal it in the UI / chart / sampler
     if (isPrimary) { ch.max = 0; ch.unit = null; }
+    ui.setChannels(connectedChannels());
     refreshDeviceUI();
+    startSampler();
   } else if (s.state === 'disconnected') {
     removeChannel(ch);
   }
@@ -205,9 +214,9 @@ function removeChannel(ch) {
   if (i === -1) return;
   channels.splice(i, 1);
   connection = channels[0]?.source || null;
-  ui.setChannels(channels);
+  ui.setChannels(connectedChannels());
   refreshDeviceUI();
-  if (!channels.length) {
+  if (!connectedChannels().length) {
     stopSampler();
     if (store.recording) stopRecording(); // flush any in-progress recording
   }
@@ -215,13 +224,13 @@ function removeChannel(ch) {
 
 // Reflect the channel set into the connection circle/list + per-channel strip.
 function refreshDeviceUI() {
-  ui.setDevices(channels.map((c) => ({ id: c.id, label: c.label, kind: c.kind })));
+  ui.setDevices(connectedChannels().map((c) => ({ id: c.id, label: c.label, kind: c.kind })));
   renderChannelStrip();
 }
 
 function renderChannelStrip() {
-  ui.renderChannels(channels.map((c) => ({
-    id: c.id, label: c.label, color: c.color, kind: c.kind,
+  ui.renderChannels(connectedChannels().map((c) => ({
+    id: c.id, label: c.label, color: c.color, kind: c.kind, type: c.source.deviceType,
     current: c.current, max: c.max, unit: c.unit || '',
     rate: c.rate, battery: c.battery, overloaded: c.overloaded,
   })));
@@ -232,7 +241,7 @@ function renderChannelStrip() {
 function startSampler() {
   if (sampleTimer) return;
   sampleTimer = setInterval(() => {
-    ui.sampleFrame(channels.map((c) => (c.unit === null ? null : c.current)));
+    ui.sampleFrame(connectedChannels().map((c) => (c.unit === null ? null : c.current)));
   }, 33);
 }
 function stopSampler() {
@@ -294,7 +303,7 @@ function onChannelLabel(id, label) {
   const ch = channels.find((c) => c.id === id);
   if (!ch) return;
   ch.label = label;
-  ui.setChannels(channels); // updates the graph legend
+  ui.setChannels(connectedChannels()); // updates the graph legend
 }
 
 // Per-channel device command (Zero / Tare / unit change). CLEAR_PEAK also
@@ -335,7 +344,7 @@ function onChannelColor(id, color) {
   const ch = channels.find((c) => c.id === id);
   if (!ch) return;
   ch.color = color;
-  ui.setChannels(channels); // recolor the chart line
+  ui.setChannels(connectedChannels()); // recolor the chart line
   renderChannelStrip();      // update the swatch
 }
 
