@@ -264,6 +264,23 @@ export function startBridge(opts = {}) {
     if (gopro) goproStart();
   }
 
+  // Stand down when no one is watching: stop ffmpeg + GoPro keep-alive and clear
+  // state so we don't ping the camera (or surface "can't reach GoPro") until a
+  // viewer actually asks for the feed again.
+  function goDormant() {
+    clearInterval(keepAlive); keepAlive = null;
+    clearTimeout(noStreamTimer);
+    clearTimeout(ffRestartTimer);
+    killFfmpeg();
+    initSeg = null;
+    streamSeen = false;
+    lastFrameAt = 0;
+    lastStartAt = 0;
+    lastReviveAt = 0;
+    lastStatus = null;
+    log('no viewers — bridge idle');
+  }
+
   // WebSocket server.
   const tagged = (tag, payload) => Buffer.concat([Buffer.from([tag]), payload]); // 0=init, 1=fragment
   const wss = new WebSocketServer({ port: wsPort });
@@ -284,8 +301,11 @@ export function startBridge(opts = {}) {
     // Otherwise the feed is stale/dead (first launch, or a Wi-Fi change while the
     // app stayed open) — revive it rather than sending a frozen init segment.
     if (flowing() && initSeg) ws.send(tagged(0, initSeg));
-    else if (gopro) reviveStream('viewer connected, no live video');
-    ws.on('close', () => log(`client disconnected (${wss.clients.size} total)`));
+    else reviveStream('viewer connected, no live video'); // starts the pipeline (+ GoPro if enabled)
+    ws.on('close', () => {
+      log(`client disconnected (${wss.clients.size} total)`);
+      if (![...wss.clients].some((c) => c.readyState === 1)) goDormant(); // last viewer left
+    });
     ws.on('error', () => {});
   });
 
@@ -317,8 +337,9 @@ export function startBridge(opts = {}) {
 
   log(`WebSocket server: ws://localhost:${wsPort}`);
   log(`reading UDP MPEG-TS on udp://@:${udpPort}`);
-  goproStart();
-  startPipeline();
+  // Stay idle until a viewer connects — don't poke the GoPro at launch (the
+  // embedded bridge starts with the app, before anyone has asked for the feed).
+  log('idle — the stream starts when a viewer connects');
 
   return {
     stop() {
