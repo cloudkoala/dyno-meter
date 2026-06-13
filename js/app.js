@@ -689,9 +689,14 @@ async function onEditSession(id) {
       let pngBlob = null;
       try { pngBlob = await graphBlobFor(rec); } catch { /* csv only */ }
       // Preserve the recorded video — deleteSession() also removes the .mp4, so
-      // read it first and re-save it under the (possibly new) name.
+      // read it first and re-save it under the (possibly new) name. A File from
+      // getFile() reads lazily from disk, so it must be materialized into memory
+      // BEFORE the delete — otherwise the re-save reads a deleted file (0 bytes).
       let mp4Blob = null;
-      try { mp4Blob = await fs.readFileBlob(folderHandle, `${id}.mp4`); } catch { /* no video */ }
+      try {
+        const f = await fs.readFileBlob(folderHandle, `${id}.mp4`);
+        mp4Blob = new Blob([await f.arrayBuffer()], { type: 'video/mp4' });
+      } catch { /* no video */ }
       await fs.deleteSession(folderHandle, id); // remove old files (name may change)
       const files = pngBlob ? { csv: csvBlob, png: pngBlob } : { csv: csvBlob };
       if (mp4Blob) files.mp4 = mp4Blob;
