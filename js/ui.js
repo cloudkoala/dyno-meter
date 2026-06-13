@@ -143,6 +143,7 @@ export class UI {
     document.addEventListener('click', (e) => {
       if (!$('settingsPanel').hidden && !e.target.closest('.settings-wrap')) this.toggleSettings(false);
       if (!$('deviceList').hidden && !e.target.closest('.conn-wrap')) this._toggleDeviceList(false);
+      if (this._inlineAddMenu && !this._inlineAddMenu.hidden && !e.target.closest('.dev-add') && !e.target.closest('.device-list-inline')) this._inlineAddMenu.hidden = true;
       if (!e.target.closest('.share-wrap')) document.querySelectorAll('.share-menu').forEach((m) => { m.hidden = true; });
       if (!e.target.closest('.dev-gear-wrap')) document.querySelectorAll('.dev-menu').forEach((m) => { m.hidden = true; });
     });
@@ -758,36 +759,17 @@ export class UI {
     this._renderDeviceMenu();
   }
 
-  // Build the connection menu: add options (LineScale 3 / Rock Exotica Enforcer /
-  // Camera) and the list of connected things — force devices and the camera —
-  // each with a red × to disconnect. The circle shows "+" when nothing's
-  // connected, otherwise the count. Re-rendered on device OR camera changes.
-  _renderDeviceMenu() {
-    const devices = this._devices || [];
-    const n = devices.length;                 // force devices — gate recording/settings
-    // Count the camera as connected only when video is actually live — not merely
-    // when the bridge WebSocket is open (which can happen with auto-connect even
-    // though no GoPro is present, falsely showing "connected" on app open).
-    const camOn = this.camera.isLive();
-    const total = n + (camOn ? 1 : 0);
-
-    const circle = $('connCircle');
-    circle.textContent = total > 0 ? String(total) : '+';
-    circle.title = total > 0 ? 'Devices' : 'Connect a device';
-    // When something's connected, show the count + a small "+" to its left to add
-    // more (the big in-body "Connect Device" card only appears when nothing is yet).
-    $('addDeviceBtn').hidden = total === 0;
-
-    const menu = $('deviceList');
-    menu.innerHTML = '';
-
+  // The add-device options (LineScale 3 / Enforcer / GoPro Camera twirl-down),
+  // shared by the top-bar "+" menu and the big in-body "Connect Device" card.
+  // closeMenu() is invoked after a choice to dismiss whichever menu opened it.
+  _buildAddGroup(closeMenu) {
     const addGroup = document.createElement('div');
     addGroup.className = 'device-add-group';
     const mkAdd = (label, fn) => {
       const b = document.createElement('button');
       b.className = 'device-add-btn';
       b.innerHTML = `<span class="device-add-plus">+</span><span>${label}</span>`;
-      b.onclick = (e) => { e.stopPropagation(); this._toggleDeviceList(false); fn(); };
+      b.onclick = (e) => { e.stopPropagation(); closeMenu(); fn(); };
       return b;
     };
     // A collapsible parent row that twirls open to reveal sub-options.
@@ -811,16 +793,40 @@ export class UI {
       mkAdd('LineScale 3', () => this.h.onConnect()),
       mkAdd('Rock Exotica Enforcer', () => this.h.onConnectEnforcer()),
     );
-    if (!camOn) {
-      // GoPro Camera twirls open to Wi-Fi / Wired. Both ultimately connect the
-      // bridge (which auto-detects USB); the Wi-Fi path adds the BLE setup +
-      // auto-join when needed.
+    if (!this.camera.isLive()) {
+      // GoPro Camera twirls open to Wi-Fi / USB. Both connect the bridge (which
+      // auto-detects USB); the Wi-Fi path adds BLE setup + auto-join when needed.
       addGroup.append(mkGroup('GoPro Camera', [
         mkAdd('Wi-Fi', () => this._connectGoProWifi()),
         mkAdd('USB', () => this._toggleCamera(true)),
       ]));
     }
-    menu.append(addGroup);
+    return addGroup;
+  }
+
+  // Build the connection menu: add options (LineScale 3 / Rock Exotica Enforcer /
+  // Camera) and the list of connected things — force devices and the camera —
+  // each with a red × to disconnect. The circle shows "+" when nothing's
+  // connected, otherwise the count. Re-rendered on device OR camera changes.
+  _renderDeviceMenu() {
+    const devices = this._devices || [];
+    const n = devices.length;                 // force devices — gate recording/settings
+    // Count the camera as connected only when video is actually live — not merely
+    // when the bridge WebSocket is open (which can happen with auto-connect even
+    // though no GoPro is present, falsely showing "connected" on app open).
+    const camOn = this.camera.isLive();
+    const total = n + (camOn ? 1 : 0);
+
+    const circle = $('connCircle');
+    circle.textContent = total > 0 ? String(total) : '+';
+    circle.title = total > 0 ? 'Devices' : 'Connect a device';
+    // When something's connected, show the count + a small "+" to its left to add
+    // more (the big in-body "Connect Device" card only appears when nothing is yet).
+    $('addDeviceBtn').hidden = total === 0;
+
+    const menu = $('deviceList');
+    menu.innerHTML = '';
+    menu.append(this._buildAddGroup(() => this._toggleDeviceList(false)));
 
     if (total) {
       const hdr = document.createElement('div');
@@ -1072,8 +1078,17 @@ export class UI {
       const add = document.createElement('button');
       add.className = 'dev-add';
       add.innerHTML = '<span class="dev-add-icon">+</span><span class="dev-add-text">Connect Device</span>';
-      add.onclick = (e) => { e.stopPropagation(); this._toggleDeviceList(true); };
-      wrap.append(add);
+      // The options drop down directly under this card (not the top-right menu),
+      // and clicking the card again closes them.
+      const inlineMenu = document.createElement('div');
+      inlineMenu.className = 'device-list-menu device-list-inline';
+      inlineMenu.hidden = true;
+      inlineMenu.append(this._buildAddGroup(() => { inlineMenu.hidden = true; }));
+      add.onclick = (e) => { e.stopPropagation(); inlineMenu.hidden = !inlineMenu.hidden; };
+      this._inlineAddMenu = inlineMenu;
+      wrap.append(add, inlineMenu);
+    } else {
+      this._inlineAddMenu = null;
     }
   }
 
