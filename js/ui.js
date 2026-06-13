@@ -441,7 +441,7 @@ export class UI {
     // Show the session's recorded clip (if any) in the camera panel; otherwise
     // stop the live feed display while viewing history.
     if (rec.videoBlob) this.playSessionVideo(rec.videoBlob);
-    else { this.camera.clearPlayback(); $('chartCam').hidden = true; this._fitChartSoon(); }
+    else { this.camera.suspendLive(); $('chartCam').hidden = true; this._fitChartSoon(); } // keep the live socket open
   }
 
   showLive() {
@@ -454,10 +454,10 @@ export class UI {
     $('clearGraphBtn').hidden = false;
     // Rebuild for the live (multi-)series; session view used a single series.
     this._buildChart(this._liveSeries(), this._liveData());
-    // Restore the live camera feed (a session view may have shown a recording).
-    this.camera.clearPlayback();
-    if (this._cameraWanted) this.camera.connect(this._cameraUrl);
-    else { $('chartCam').hidden = true; }
+    // Restore the live camera feed. If the socket stayed open during the session,
+    // resumeLive re-attaches instantly; otherwise it (re)connects.
+    if (this._cameraWanted) this.camera.resumeLive();
+    else { this.camera.clearPlayback(); $('chartCam').hidden = true; }
     this._fitChartSoon();
     this.h.onSelectSession(null);
   }
@@ -810,10 +810,10 @@ export class UI {
   _renderDeviceMenu() {
     const devices = this._devices || [];
     const n = devices.length;                 // force devices — gate recording/settings
-    // Count the camera as connected only when video is actually live — not merely
-    // when the bridge WebSocket is open (which can happen with auto-connect even
-    // though no GoPro is present, falsely showing "connected" on app open).
-    const camOn = this.camera.isLive();
+    // Count the camera as connected when video is live, or when it's only paused
+    // for saved-session playback (socket still open) — but not merely when the
+    // bridge WebSocket is open with no GoPro (which would falsely show on launch).
+    const camOn = this.camera.isLive() || this.camera.isSuspendedLive();
     const total = n + (camOn ? 1 : 0);
 
     const circle = $('connCircle');

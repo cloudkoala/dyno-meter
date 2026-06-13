@@ -50,6 +50,7 @@ export class CameraFeed {
     this._statusCbs = [];
     this._lastFrameAt = 0;    // ms timestamp of the last live fragment
     this._liveWatch = null;   // interval that drops the feed if frames stop
+    this._suspended = false;  // live rendering paused for saved-session playback (socket kept open)
   }
 
   attach(videoEl) { this.video = videoEl; }
@@ -58,11 +59,15 @@ export class CameraFeed {
 
   isConnected() { return !!this.ws && this.ws.readyState === 1; }
   isLive() { return !!this.sb; }
+  // Connected to the bridge but not rendering live, because a saved clip is being
+  // shown instead (session view). Still "connected" as far as the UI is concerned.
+  isSuspendedLive() { return this._suspended && this.isConnected() && !!this.initSeg; }
 
   // ---- connection -----------------------------------------------------------
   connect(url) {
     this.url = url || this.url;
     this._wantOpen = true;
+    this._suspended = false;
     this._open();
   }
 
@@ -122,7 +127,11 @@ export class CameraFeed {
     this._teardownMedia();
     this.ms = new MediaSource();
     this.video.src = URL.createObjectURL(this.ms);
+    // Live-feed video settings (also needed when resuming after saved-clip playback,
+    // which had turned controls on): no scrub bar, muted, autoplay.
     this.video.muted = true;
+    this.video.controls = false;
+    this.video.autoplay = true;
     this.ms.addEventListener('sourceopen', () => {
       try {
         this.sb = this.ms.addSourceBuffer(mime);
@@ -222,11 +231,30 @@ export class CameraFeed {
   }
 
   // ---- saved-session playback ----------------------------------------------
-  // Show a recorded clip (independent of the live socket).
-  showBlob(blob) {
-    this.disconnect();
-    if (!this.video) return;
+  // Free the <video> element for saved playback but KEEP the bridge socket open,
+  // so the live feed isn't torn down (the bridge keeps streaming and the camera
+  // stays "connected"). Returning to live resumes instantly via resumeLive().
+  suspendLive() {
+    this._suspended = true;
     this._objUrl && URL.revokeObjectURL(this._objUrl);
+    this._objUrl = null;
+    this._teardownMedia(); // drops the MSE/SourceBuffer; the WebSocket stays connected
+  }
+
+  // Resume the live feed after a session view. If the socket stayed open, just
+  // re-attach MSE from the cached init segment; otherwise (re)connect.
+  resumeLive() {
+    this._suspended = false;
+    this._objUrl && URL.revokeObjectURL(this._objUrl);
+    this._objUrl = null;
+    if (this.isConnected() && this.initSeg && this.codec) this._setupMedia();
+    else if (this._wantOpen) this._open();
+  }
+
+  // Show a recorded clip (keeps the live socket open — see suspendLive).
+  showBlob(blob) {
+    this.suspendLive();
+    if (!this.video) return;
     this._objUrl = URL.createObjectURL(blob);
     this.video.autoplay = false; // don't auto-play a saved clip — let the user press play
     this.video.muted = false;

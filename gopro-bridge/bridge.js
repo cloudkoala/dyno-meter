@@ -143,7 +143,7 @@ export function startBridge(opts = {}) {
     clearTimeout(noStreamTimer);
     noStreamTimer = setTimeout(() => {
       if (!streamSeen && lastStatus?.level !== 'error') {
-        setStatus('warn', `No video from the GoPro yet. Make sure it's on its Wi-Fi with wireless enabled, then remove and re-add the camera.`);
+        setStatus('warn', `No video from the GoPro yet — make sure it's connected (USB or Wi-Fi) and streaming.`);
       }
     }, 8000);
   }
