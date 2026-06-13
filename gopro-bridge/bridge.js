@@ -90,12 +90,20 @@ export function startBridge(opts = {}) {
 
   let stopped = false;
   let ff = null;
+  let ffRestartTimer = null;
   let keepAlive = null;
   let initSeg = null;
   let codec = 'avc1.42E01E';
   let streamSeen = false;       // have we ever produced an init segment (real video flowing)?
   let noStreamTimer = null;
   let lastStatus = null;        // latest diagnostic, replayed to each new client
+  let lastFrameAt = 0;          // ms timestamp of the last media fragment (stream liveness)
+  let lastReviveAt = 0;         // rate-limits recovery attempts while video is down
+  let lastStartAt = 0;          // when ffmpeg last (re)started — used as a warm-up grace
+  let liveness = null;          // periodic "is video still flowing?" watchdog
+
+  // Video is considered flowing if a fragment arrived in the last few seconds.
+  const flowing = () => Date.now() - lastFrameAt < 3000;
 
   // Push a diagnostic to every connected client, and remember it so a client
   // that connects later still learns the current state (set before any client
@@ -152,8 +160,13 @@ export function startBridge(opts = {}) {
     const gop = Math.max(1, Math.round(keyframeS * 30)); // GOP in frames (assume ~30fps)
     const args = [
       '-hide_banner', '-loglevel', 'warning',
-      '-fflags', 'nobuffer', '-flags', 'low_delay',
+      // discardcorrupt: drop the corrupt/out-of-order packets that show up right
+      // after a Wi-Fi gap instead of wedging the demuxer.
+      '-fflags', '+nobuffer+discardcorrupt', '-flags', 'low_delay',
       '-i', `udp://@:${udpPort}?overrun_nonfatal=1&fifo_size=50000000`,
+      // Map only the first video + (optional) audio — GoPro TS also carries a
+      // telemetry/data stream that ffmpeg otherwise trips over on each restart.
+      '-map', '0:v:0', '-map', '0:a:0?',
       '-c:v', 'libx264', '-preset', 'veryfast', '-tune', 'zerolatency',
       '-profile:v', 'baseline', '-pix_fmt', 'yuv420p',
       '-c:a', 'aac', '-b:a', '128k', // include audio if the source has it
@@ -171,13 +184,42 @@ export function startBridge(opts = {}) {
     return proc;
   }
 
+  // Stop the current ffmpeg without triggering its auto-restart-on-exit (used when
+  // we intentionally restart it ourselves).
+  function killFfmpeg() {
+    const p = ff; ff = null;
+    if (!p) return;
+    p.removeAllListeners('exit');
+    try { p.kill('SIGKILL'); } catch { /* ignore */ }
+  }
+
   function startPipeline() {
     if (stopped) return;
+    clearTimeout(ffRestartTimer);
+    killFfmpeg();
+    lastStartAt = Date.now();
     initSeg = null;
     const split = makeBoxSplitter(onInit, onFragment);
-    ff = startFfmpeg(split, (code) => {
-      if (!stopped && code !== 0) { log('restarting ffmpeg in 2s…'); setTimeout(startPipeline, 2000); }
+    ff = startFfmpeg(split, () => {
+      ff = null;
+      if (!stopped) { log('ffmpeg exited; restarting in 2s…'); ffRestartTimer = setTimeout(startPipeline, 2000); }
     });
+  }
+
+  // Recover a dead/stalled feed: restart ffmpeg fresh (so it re-reads UDP without
+  // the post-gap corrupt timestamps) and re-ask the GoPro to stream. Rate-limited
+  // so a down camera doesn't get hammered. Called on (re)connect and by the
+  // liveness watchdog — this is what makes the feed come back after a Wi-Fi change
+  // without restarting the whole app.
+  function reviveStream(reason) {
+    if (stopped || Date.now() - lastReviveAt < 4000) return;
+    // ffmpeg can take several seconds to emit its first frame (it waits for an
+    // input keyframe). Don't kill a still-warming encoder, or it never produces.
+    if (Date.now() - lastStartAt < 10000) return;
+    lastReviveAt = Date.now();
+    log(`reviving stream (${reason})`);
+    startPipeline();
+    if (gopro) goproStart();
   }
 
   // WebSocket server.
@@ -196,10 +238,11 @@ export function startBridge(opts = {}) {
     log(`client connected (${wss.clients.size} total)`);
     ws.send(JSON.stringify({ type: 'hello', codec }));
     if (lastStatus) ws.send(JSON.stringify(lastStatus));
-    if (initSeg) ws.send(tagged(0, initSeg));
-    // A viewer is here but no video is flowing yet — (re)ask the GoPro to stream.
-    // The one-shot start at launch often runs before the GoPro Wi-Fi is joined.
-    else if (gopro && !streamSeen) goproStart();
+    // If video is currently flowing, hand the viewer the live init segment to join.
+    // Otherwise the feed is stale/dead (first launch, or a Wi-Fi change while the
+    // app stayed open) — revive it rather than sending a frozen init segment.
+    if (flowing() && initSeg) ws.send(tagged(0, initSeg));
+    else if (gopro) reviveStream('viewer connected, no live video');
     ws.on('close', () => log(`client disconnected (${wss.clients.size} total)`));
     ws.on('error', () => {});
   });
@@ -218,8 +261,17 @@ export function startBridge(opts = {}) {
     }
   };
   const onFragment = (frag) => {
+    lastFrameAt = Date.now();
     for (const ws of wss.clients) if (ws.readyState === 1) ws.send(tagged(1, frag));
   };
+
+  // Liveness watchdog: while a viewer is connected but no video is flowing, keep
+  // (re)starting the stream. When the GoPro Wi-Fi comes back, the next attempt
+  // succeeds and the feed resumes on its own — no app restart needed.
+  liveness = setInterval(() => {
+    if (stopped || !gopro || wss.clients.size === 0 || flowing()) return;
+    reviveStream('no live video while a viewer is waiting');
+  }, 2000);
 
   log(`WebSocket server: ws://localhost:${wsPort}`);
   log(`reading UDP MPEG-TS on udp://@:${udpPort}`);
@@ -230,8 +282,10 @@ export function startBridge(opts = {}) {
     stop() {
       stopped = true;
       clearInterval(keepAlive);
+      clearInterval(liveness);
       clearTimeout(noStreamTimer);
-      try { ff && ff.kill('SIGKILL'); } catch { /* ignore */ }
+      clearTimeout(ffRestartTimer);
+      killFfmpeg();
       try { wss.close(); } catch { /* ignore */ }
     },
   };
