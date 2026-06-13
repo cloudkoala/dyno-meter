@@ -5,6 +5,7 @@
 import { MultiSelect } from './multiselect.js';
 import { asChannels } from './store.js';
 import { CameraFeed } from './camera.js';
+import { enableGoProWifi } from './gopro-ble.js';
 
 // Colors for multi-channel session rendering / PNG export (mirrors app.js).
 const CHAN_COLORS = ['#3fb6ff', '#ffb020', '#2ec36a', '#ff5252', '#b06fff', '#ff8f3f'];
@@ -474,6 +475,24 @@ export class UI {
 
   connectCamera() { this._toggleCamera(true); }
 
+  // One-tap GoPro Wi-Fi setup (Electron): enable the camera's Wi-Fi AP over
+  // Bluetooth, read its credentials, join that network, then connect the feed —
+  // replacing the manual phone-app + macOS Wi-Fi-picker dance.
+  async _setupGoProWifi() {
+    try {
+      const creds = await enableGoProWifi((msg) => this.toast(msg));
+      this.toast(`Joining "${creds.ssid}"…`);
+      const res = await window.dynoNative.joinWifi({ ssid: creds.ssid, password: creds.password });
+      if (!res || !res.ok) { this.toast(res?.message || 'Could not join the GoPro Wi-Fi', true); return; }
+      this.toast(res.message || `Joined ${creds.ssid}`);
+      // Give the network a moment to come up before the bridge tries to reach the GoPro.
+      setTimeout(() => this._toggleCamera(true), 1500);
+    } catch (e) {
+      if (e && (e.name === 'NotFoundError' || e.name === 'AbortError')) return; // user cancelled the chooser
+      this.toast(e?.message || 'GoPro Bluetooth setup failed', true);
+    }
+  }
+
   // Electron Web Bluetooth picker: main forwards the (live-updating) device list here;
   // selecting one calls back via dynoNative.selectBle. Cancel is wired in init().
   _showBlePicker(devices) {
@@ -724,7 +743,15 @@ export class UI {
       mkAdd('LineScale 3', () => this.h.onConnect()),
       mkAdd('Rock Exotica Enforcer', () => this.h.onConnectEnforcer()),
     );
-    if (!camOn) addGroup.append(mkAdd('Camera (GoPro)', () => this._toggleCamera(true)));
+    if (!camOn) {
+      addGroup.append(mkAdd('Camera (GoPro)', () => this._toggleCamera(true)));
+      // Electron only: turn on the GoPro's Wi-Fi over Bluetooth and auto-join it,
+      // so there's no need for the GoPro phone app. (USB needs no setup — the
+      // bridge auto-detects it, so plain "Camera (GoPro)" covers that.)
+      if (window.dynoNative?.joinWifi) {
+        addGroup.append(mkAdd('GoPro Wi-Fi setup (Bluetooth)', () => this._setupGoProWifi()));
+      }
+    }
     menu.append(addGroup);
 
     if (total) {
