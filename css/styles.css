@@ -374,7 +374,7 @@ body.is-recording .device-bar { border-color: var(--red); }
 }
 .device-add-btn:hover { background: #1b212b; }
 .device-add-plus { color: var(--accent); font-size: 18px; line-height: 1; width: 14px; text-align: center; }
-.device-add-twirl { margin-left: auto; color: var(--muted); font-size: 11px; }
+.device-add-twirl { margin-left: auto; color: var(--muted); font-size: 16px; line-height: 1; }
 .device-add-sub { display: flex; flex-direction: column; gap: 2px; padding-left: 16px; }
 .device-add-sub .device-add-btn { font-weight: 500; font-size: 13px; padding: 7px 9px; }
 .device-list-hdr {

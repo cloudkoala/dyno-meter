@@ -817,7 +817,7 @@ export class UI {
       // auto-join when needed.
       addGroup.append(mkGroup('GoPro Camera', [
         mkAdd('Wi-Fi', () => this._connectGoProWifi()),
-        mkAdd('Wired (USB)', () => this._toggleCamera(true)),
+        mkAdd('USB', () => this._toggleCamera(true)),
       ]));
     }
     menu.append(addGroup);
