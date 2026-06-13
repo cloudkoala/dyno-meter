@@ -481,7 +481,7 @@ export class UI {
   async _setupGoProWifi() {
     try {
       const creds = await enableGoProWifi((msg) => this.toast(msg));
-      this.toast(`Joining "${creds.ssid}"…`);
+      this.toast(`Waiting for "${creds.ssid}" and joining (this can take a few seconds)…`);
       const res = await window.dynoNative.joinWifi({ ssid: creds.ssid, password: creds.password });
       if (!res || !res.ok) { this.toast(res?.message || 'Could not join the GoPro Wi-Fi', true); return; }
       this.toast(res.message || `Joined ${creds.ssid}`);

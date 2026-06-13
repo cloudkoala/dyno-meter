@@ -2,7 +2,7 @@
 // Verifies the pure Wi-Fi-join helpers (macOS interface parsing, Windows profile
 // XML + escaping). The actual networksetup/netsh calls need a real OS + adapter.
 import wifi from '../electron/wifi.js';
-const { parseWifiInterfaceMac, windowsWifiProfileXml, xmlEscape } = wifi;
+const { parseWifiInterfaceMac, windowsWifiProfileXml, xmlEscape, joinWifi } = wifi;
 
 let pass = 0, fail = 0;
 const check = (name, cond, detail = '') =>
@@ -35,6 +35,27 @@ check('xmlEscape escapes special chars', xmlEscape(`a&b<c>"d'`) === 'a&amp;b&lt;
 const xml2 = windowsWifiProfileXml('My&Net', 'p<a>ss&"');
 check('SSID with & is escaped in XML', xml2.includes('<name>My&amp;Net</name>'));
 check('password with special chars is escaped', xml2.includes('<keyMaterial>p&lt;a&gt;ss&amp;&quot;</keyMaterial>'));
+
+// joinWifi retries until the network appears (the GoPro AP boots slowly).
+const ssidCreds = { ssid: 'GP24512345', password: 'pw' };
+{
+  let calls = 0;
+  const _join = async () => { calls++; return calls >= 3 ? { ok: true, message: 'joined' } : { ok: false, message: 'could not find network' }; };
+  const res = await joinWifi(ssidCreds, { attempts: 5, gapMs: 0, _join });
+  check('retries until the AP appears, then succeeds', res.ok && calls === 3, `ok=${res.ok} calls=${calls}`);
+}
+{
+  let calls = 0;
+  const _join = async () => { calls++; return { ok: false, message: 'could not find network' }; };
+  const res = await joinWifi(ssidCreds, { attempts: 4, gapMs: 0, _join });
+  check('gives up after N attempts with the last error', !res.ok && calls === 4, `ok=${res.ok} calls=${calls}`);
+}
+{
+  const _join = async () => { throw new Error('networksetup blew up'); };
+  const res = await joinWifi(ssidCreds, { attempts: 2, gapMs: 0, _join });
+  check('a throwing join is caught, not propagated', !res.ok && /blew up/.test(res.message));
+}
+check('missing SSID -> not ok, no attempt', (await joinWifi({}, { _join: async () => ({ ok: true }) })).ok === false);
 
 console.log(`\n${pass} passed, ${fail} failed`);
 process.exit(fail ? 1 : 0);

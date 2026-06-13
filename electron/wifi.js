@@ -75,16 +75,31 @@ async function joinWindows(ssid, password) {
   }
 }
 
-// Join a Wi-Fi network. Returns { ok, message }; never throws.
-async function joinWifi({ ssid, password } = {}) {
+const delay = (ms) => new Promise((r) => setTimeout(r, ms));
+
+// Join a Wi-Fi network, retrying until it appears. The GoPro takes several
+// seconds to start broadcasting after BLE enables its AP, so a single attempt
+// usually fails with "could not find network" — retry a handful of times.
+// Returns { ok, message }; never throws. opts: { attempts, gapMs, _join } —
+// _join(ssid, password) overrides the platform call (for tests).
+async function joinWifi(creds = {}, opts = {}) {
+  const { ssid, password } = creds;
   if (!ssid) return { ok: false, message: 'No Wi-Fi network name provided' };
-  try {
-    if (process.platform === 'darwin') return await joinMac(ssid, password);
-    if (process.platform === 'win32') return await joinWindows(ssid, password);
-    return { ok: false, message: `Auto-join isn't supported on ${process.platform}. Join "${ssid}" manually (password: ${password || 'n/a'}).` };
-  } catch (e) {
-    return { ok: false, message: e.message || String(e) };
+  const join = opts._join || (
+    process.platform === 'darwin' ? joinMac
+    : process.platform === 'win32' ? joinWindows
+    : null);
+  if (!join) return { ok: false, message: `Auto-join isn't supported on ${process.platform}. Join "${ssid}" manually (password: ${password || 'n/a'}).` };
+
+  const attempts = opts.attempts ?? 6;
+  const gapMs = opts.gapMs ?? 2500;
+  let last = { ok: false, message: 'Join not attempted' };
+  for (let i = 0; i < attempts; i++) {
+    try { last = await join(ssid, password); if (last && last.ok) return last; }
+    catch (e) { last = { ok: false, message: e.message || String(e) }; }
+    if (i < attempts - 1) await delay(gapMs);
   }
+  return last;
 }
 
 module.exports = { joinWifi, parseWifiInterfaceMac, windowsWifiProfileXml, xmlEscape };
