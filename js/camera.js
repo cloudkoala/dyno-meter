@@ -65,7 +65,9 @@ export class CameraFeed {
   }
 
   _open() {
-    if (this.video) { this.video.controls = true; this.video.autoplay = true; }
+    // Live feed: no controls — the scrub/seek bar is meaningless (and glitchy) on a
+    // live stream. Saved-session playback re-enables controls in showBlob().
+    if (this.video) { this.video.controls = false; this.video.autoplay = true; }
     try { this.ws = new WebSocket(this.url); }
     catch (e) { this._status({ state: 'error', message: e.message }); return; }
     this.ws.binaryType = 'arraybuffer';

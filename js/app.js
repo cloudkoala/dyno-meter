@@ -688,8 +688,14 @@ async function onEditSession(id) {
       const csvBlob = new Blob([recordingToCSV(rec)], { type: 'text/csv' });
       let pngBlob = null;
       try { pngBlob = await graphBlobFor(rec); } catch { /* csv only */ }
+      // Preserve the recorded video — deleteSession() also removes the .mp4, so
+      // read it first and re-save it under the (possibly new) name.
+      let mp4Blob = null;
+      try { mp4Blob = await fs.readFileBlob(folderHandle, `${id}.mp4`); } catch { /* no video */ }
       await fs.deleteSession(folderHandle, id); // remove old files (name may change)
-      await fs.saveFiles(folderHandle, rec.name, pngBlob ? { csv: csvBlob, png: pngBlob } : { csv: csvBlob });
+      const files = pngBlob ? { csv: csvBlob, png: pngBlob } : { csv: csvBlob };
+      if (mp4Blob) files.mp4 = mp4Blob;
+      await fs.saveFiles(folderHandle, rec.name, files);
     } catch (e) { ui.toast('Edit save failed: ' + (e.message || e), true); }
   } else {
     await store.persist(rec); // IndexedDB id unchanged
