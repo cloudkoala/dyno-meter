@@ -195,6 +195,9 @@ function metaHeader(rec) {
 function recordingToWideCSV(rec, ch, unit) {
   const lines = [
     ...metaHeader(rec),
+    // Carry the device name through the same header the long format uses, so a
+    // single-device session round-trips its label (e.g. "LineScale 3 #1").
+    ...(ch.label ? [`# channels: ${ch.label}`] : []),
     `# unit: ${unit}`,
     `# samples: ${ch.samples.length}  max: ${ch.max}`,
     `time_s,value_${unit},absolute_${unit}`,

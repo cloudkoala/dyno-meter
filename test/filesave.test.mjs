@@ -44,6 +44,21 @@ check('sample abs', back.samples[1].abs === 5.0, `${back.samples[1].abs}`);
 check('single-channel returns channels[] of length 1', Array.isArray(back.channels) && back.channels.length === 1, `${back.channels?.length}`);
 check('single-channel CSV stays wide', /\btime_s,value_kN,absolute_kN\b/.test(csv));
 
+// A single-device recording carries its device label through the wide CSV so
+// the session view knows which device was used (regression: was dropped).
+const labeled = {
+  name: 'Solo-01', testId: 'Solo', sample: '01', config: '', material: [],
+  startedAt: Date.UTC(2026, 5, 12, 8, 0, 0), unit: 'kN',
+  channels: [{ label: 'LineScale 3 #1', unit: 'kN', max: 3.2, samples: [
+    { t: 0, value: 0.5, abs: 0.4 }, { t: 250, value: 3.2, abs: 3.0 },
+  ] }],
+};
+const lcsv = recordingToCSV(labeled);
+const lback = parseSessionCsv(lcsv, 'Solo-01');
+check('single-channel CSV stays wide (labeled)', /\btime_s,value_kN,absolute_kN\b/.test(lcsv), lcsv);
+check('single-channel device label round-trips', lback.channels[0].label === 'LineScale 3 #1', lback.channels[0].label);
+check('labelless single-channel stays empty', parseSessionCsv(csv, 'x').channels[0].label === '', `"${parseSessionCsv(csv, 'x').channels[0].label}"`);
+
 // ---- multi-channel long-format round-trip ------------------------------
 const multi = {
   name: 'Pull-07',

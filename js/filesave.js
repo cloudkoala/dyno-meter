@@ -136,7 +136,7 @@ export function parseSessionCsv(text, baseName) {
     }
     let cmax = 0;
     for (const s of samples) if (s.value > cmax) cmax = s.value;
-    channels = [{ label: '', unit, max: cmax, samples }];
+    channels = [{ label: channelHdr || '', unit, max: cmax, samples }];
   }
 
   // Derived totals across channels.
