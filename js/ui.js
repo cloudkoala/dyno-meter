@@ -1084,7 +1084,18 @@ export class UI {
       inlineMenu.className = 'device-list-menu device-list-inline';
       inlineMenu.hidden = true;
       inlineMenu.append(this._buildAddGroup(() => { inlineMenu.hidden = true; }));
-      add.onclick = (e) => { e.stopPropagation(); inlineMenu.hidden = !inlineMenu.hidden; };
+      // Pop up at the click point; clicking the card again closes it. Clamp to the
+      // viewport so it never spills off-screen.
+      add.onclick = (e) => {
+        e.stopPropagation();
+        if (!inlineMenu.hidden) { inlineMenu.hidden = true; return; }
+        inlineMenu.hidden = false;
+        const r = inlineMenu.getBoundingClientRect();
+        const x = Math.min(e.clientX, window.innerWidth - r.width - 8);
+        const y = Math.min(e.clientY, window.innerHeight - r.height - 8);
+        inlineMenu.style.left = `${Math.max(8, x)}px`;
+        inlineMenu.style.top = `${Math.max(8, y)}px`;
+      };
       this._inlineAddMenu = inlineMenu;
       wrap.append(add, inlineMenu);
     } else {

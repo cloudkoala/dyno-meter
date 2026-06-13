@@ -366,8 +366,8 @@ body.is-recording .device-bar { border-color: var(--red); }
   background: var(--panel); border: 1px solid var(--border); border-radius: 10px;
   padding: 6px; box-shadow: 0 12px 40px rgba(0,0,0,.5);
 }
-/* Same panel look, but dropped inline under the big "Connect Device" card. */
-.device-list-inline { position: static; right: auto; top: auto; align-self: flex-start; margin-top: -4px; }
+/* Same panel look, but a popup positioned at the click point on the card. */
+.device-list-inline { position: fixed; right: auto; margin: 0; }
 .device-add-group { display: flex; flex-direction: column; gap: 2px; }
 .device-add-btn {
   display: flex; align-items: center; gap: 9px; width: 100%; text-align: left;
