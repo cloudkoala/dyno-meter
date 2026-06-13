@@ -9,7 +9,7 @@
 // CommonJS so we can `require('electron')`/`require('ffmpeg-static')`; the ESM bridge
 // module is loaded with dynamic import().
 
-const { app, BrowserWindow, ipcMain } = require('electron');
+const { app, BrowserWindow, ipcMain, session } = require('electron');
 const http = require('node:http');
 const { readFile } = require('node:fs/promises');
 const path = require('node:path');
@@ -96,6 +96,11 @@ if (!app.requestSingleInstanceLock()) {
   app.on('second-instance', () => { if (win) { if (win.isMinimized()) win.restore(); win.focus(); } });
 
   app.whenReady().then(async () => {
+    // Trusted local app (its own 127.0.0.1 origin): auto-grant permissions so a
+    // saved session folder reconnects on launch without a dialog, and the File
+    // System Access / Bluetooth flows aren't blocked.
+    session.defaultSession.setPermissionCheckHandler(() => true);
+    session.defaultSession.setPermissionRequestHandler((_wc, _perm, cb) => cb(true));
     const { startBridge } = await import('../gopro-bridge/bridge.js');
     const port = await startStaticServer();
     // Embedded GoPro bridge with bundled ffmpeg; serves ws://localhost:8088 like the CLI,

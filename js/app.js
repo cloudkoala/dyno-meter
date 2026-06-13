@@ -557,7 +557,7 @@ async function saveSessionToFolder(rec) {
 async function refreshSessions() {
   let list;
   if (usingFolder()) {
-    if (!(await folderGranted(false))) { ui.showReconnect(folderHandle.name, reconnectFolder); return; }
+    if (!(await folderGranted(false))) { armFolderReconnect(); return; }
     list = await fs.listSessions(folderHandle);
   } else {
     list = await store.list();
@@ -608,6 +608,27 @@ function materialsFromSessions(list) {
   const set = new Set();
   for (const s of list) for (const m of (Array.isArray(s.material) ? s.material : [])) set.add(m);
   return [...set];
+}
+
+// The File System Access API won't re-grant a restored folder handle without a
+// user gesture, so we can't silently reconnect on load. Instead, re-grant on the
+// user's FIRST interaction (any click/keypress) — one allow dialog at most, no
+// hunting for a button. In Electron the permission is auto-granted, so this path
+// usually isn't even reached. If the user denies, fall back to the manual prompt.
+let folderReconnectArmed = false;
+function armFolderReconnect() {
+  ui.setFolderName(folderHandle.name); // keep showing which folder is configured
+  if (folderReconnectArmed) return;
+  folderReconnectArmed = true;
+  const onGesture = async () => {
+    window.removeEventListener('pointerdown', onGesture, true);
+    window.removeEventListener('keydown', onGesture, true);
+    folderReconnectArmed = false;
+    if (await fs.ensurePermission(folderHandle, { prompt: true })) await refreshSessions();
+    else ui.showReconnect(folderHandle.name, reconnectFolder); // denied — offer manual re-pick
+  };
+  window.addEventListener('pointerdown', onGesture, true);
+  window.addEventListener('keydown', onGesture, true);
 }
 
 async function reconnectFolder() {
