@@ -152,16 +152,18 @@ export class CameraFeed {
     catch (e) { if (e.name === 'QuotaExceededError') this._evict(); }
   }
 
-  // Keep the live playhead near the newest data: if it drifts more than ~0.5s
-  // behind (after a stall or buffer build-up), jump to the live edge. Only for
-  // the live stream (this.sb), never during saved-clip playback.
+  // Keep the live playhead glued to the newest data for minimum latency. If it
+  // drifts more than ~0.12s behind the live edge (stall or buffer build-up), jump
+  // to within ~2 frames of it. Only for the live stream (this.sb), never during
+  // saved-clip playback. The 0.12/0.06 pair is the playback-side latency knob:
+  // smaller = lower lag but more risk of micro-stalls when frames arrive late.
   _snapLive() {
     if (!this.sb || !this.video || this.video.seeking) return;
     const b = this.video.buffered;
     if (!b.length) return;
     const end = b.end(b.length - 1);
-    if (end - this.video.currentTime > 0.5) {
-      try { this.video.currentTime = Math.max(0, end - 0.05); } catch { /* ignore */ }
+    if (end - this.video.currentTime > 0.12) {
+      try { this.video.currentTime = Math.max(0, end - 0.06); } catch { /* ignore */ }
     }
   }
 

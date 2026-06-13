@@ -82,8 +82,8 @@ export function startBridge(opts = {}) {
   const gopro = opts.gopro ?? (process.env.GOPRO !== '0');
   const goproIp = opts.goproIp ?? process.env.GOPRO_IP ?? '10.5.5.9';
   // Keyframe = fragment interval (s) — the main lever on live latency. Lower = lower
-  // latency + more CPU/bitrate; 0.033 ≈ every frame (all-intra).
-  const keyframeS = Math.max(0.02, Number(opts.keyframeS ?? process.env.KEYFRAME_S ?? 0.1));
+  // latency + more CPU/bitrate; 0.033 ≈ every frame (all-intra) for the lowest lag.
+  const keyframeS = Math.max(0.02, Number(opts.keyframeS ?? process.env.KEYFRAME_S ?? 0.033));
   const ffmpegPath = opts.ffmpegPath || 'ffmpeg';
   const log = (...a) => console.log('[bridge]', ...a);
 
