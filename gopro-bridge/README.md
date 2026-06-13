@@ -44,3 +44,4 @@ Then connect from the web app's Camera panel.
 | `UDP_PORT`| `8554`       | UDP port the GoPro/test source streams to|
 | `GOPRO`   | `1`          | `0` disables GoPro HTTP control/keep-alive|
 | `GOPRO_IP`| `10.5.5.9`   | GoPro HTTP address                       |
+| `KEYFRAME_S`| `0.1`      | keyframe/fragment interval (s) — lower = lower latency, more CPU/bitrate. `0.033` ≈ every frame |

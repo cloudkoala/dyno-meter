@@ -19,6 +19,9 @@ const WS_PORT = Number(process.env.WS_PORT || 8088);
 const UDP_PORT = Number(process.env.UDP_PORT || 8554);
 const GOPRO = process.env.GOPRO !== '0';
 const GOPRO_IP = process.env.GOPRO_IP || '10.5.5.9';
+// Keyframe = fragment interval in seconds — the main lever on live latency.
+// Lower = lower latency + more CPU/bitrate. 0.033 ≈ every frame (all-intra).
+const KEYFRAME_S = Math.max(0.02, Number(process.env.KEYFRAME_S || 0.1));
 
 const log = (...a) => console.log('[bridge]', ...a);
 
@@ -103,6 +106,7 @@ function codecFromInit(init) {
 
 // ---- ffmpeg: UDP MPEG-TS -> fMP4 on stdout ---------------------------------------------
 function startFfmpeg(onData, onExit) {
+  const gop = Math.max(1, Math.round(KEYFRAME_S * 30)); // GOP in frames (assume ~30fps)
   const args = [
     '-hide_banner', '-loglevel', 'warning',
     '-fflags', 'nobuffer', '-flags', 'low_delay',
@@ -110,7 +114,11 @@ function startFfmpeg(onData, onExit) {
     '-c:v', 'libx264', '-preset', 'veryfast', '-tune', 'zerolatency',
     '-profile:v', 'baseline', '-pix_fmt', 'yuv420p',
     '-c:a', 'aac', '-b:a', '128k', // include audio if the source has it
-    '-g', '30', '-force_key_frames', 'expr:gte(t,n_forced*1)', // keyframe ~every 1s
+    // Keyframe every KEYFRAME_S sec → fragments flush that often. Fragment size
+    // is the dominant source of live latency, so smaller = lower latency (more
+    // CPU/bitrate). Assume ~30fps for the GOP; force_key_frames is authoritative.
+    '-g', String(gop), '-keyint_min', String(gop), '-sc_threshold', '0',
+    '-force_key_frames', `expr:gte(t,n_forced*${KEYFRAME_S})`,
     '-movflags', '+frag_keyframe+empty_moov+default_base_moof+omit_tfhd_offset',
     '-flush_packets', '1', // emit each fragment to the pipe immediately (low latency)
     '-f', 'mp4', 'pipe:1',
@@ -125,6 +133,15 @@ function startFfmpeg(onData, onExit) {
 
 // ---- WebSocket server ------------------------------------------------------------------
 const wss = new WebSocketServer({ port: WS_PORT });
+wss.on('error', (e) => {
+  if (e.code === 'EADDRINUSE') {
+    log(`⚠ port ${WS_PORT} is already in use — another bridge is probably already running.`);
+    log('  Close the other one (or set WS_PORT to a different port), then retry.');
+  } else {
+    log('WebSocket server error: ' + e.message);
+  }
+  process.exit(1);
+});
 let initSeg = null;
 let codec = 'avc1.42E01E';
 
