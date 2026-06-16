@@ -54,6 +54,11 @@ export class CameraFeed {
   }
 
   attach(videoEl) { this.video = videoEl; }
+  // Send a control message to the bridge (e.g. start/stop on-camera recording).
+  sendControl(obj) {
+    if (!this.isConnected()) return false;
+    try { this.ws.send(JSON.stringify(obj)); return true; } catch { return false; }
+  }
   onStatus(cb) { this._statusCbs.push(cb); return this; }
   _status(s) { for (const cb of this._statusCbs) cb(s); }
 
@@ -104,6 +109,7 @@ export class CameraFeed {
         const m = JSON.parse(ev.data);
         if (m.type === 'hello') this.codec = m.codec;
         else if (m.type === 'status') this._status({ state: 'bridge', level: m.level, message: m.message });
+        else if (m.type === 'cmdresult') this._status({ state: 'cmdresult', ok: m.ok, message: m.message });
       } catch {}
       return;
     }

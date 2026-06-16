@@ -33,6 +33,7 @@ let activeSessionId = null;
 let recInfoTimer = null;
 let recordingNamed = false; // did the user type a name for the active recording?
 let recordingVideo = false; // is the camera feed being recorded with this session?
+let recordingOnGoPro = false; // did we trigger on-camera (SD) recording for this session?
 // Map from live-channel id -> recording-channel index, fixed when recording
 // starts. Channels added mid-recording aren't in the map (ignored); removed
 // channels simply stop appending.
@@ -471,6 +472,8 @@ async function onToggleRecord(fields) {
   // Record the live camera feed too, but only when saving to a folder (video is
   // folder-only by design). The live feed still shows even without recording.
   recordingVideo = usingFolder() && ui.cameraLive() && ui.cameraStartRec();
+  // Optionally trigger a full-res recording on the GoPro's own SD card.
+  recordingOnGoPro = settings.recordOnGoPro && ui.cameraLive() && ui.triggerCameraRecord(true);
   recInfoTimer = setInterval(updateRecInfo, 250);
   updateRecInfo();
   // Pre-authorize the folder now (Start is a user gesture) so the save on
@@ -494,6 +497,7 @@ async function stopRecording() {
   // Stop video immediately (don't keep buffering while the name dialog is open).
   const videoBlob = recordingVideo ? ui.cameraStopRec() : null;
   recordingVideo = false;
+  if (recordingOnGoPro) { ui.triggerCameraRecord(false); recordingOnGoPro = false; }
   ui.setRecordingState(false);
   if (!rec) { await refreshSessions(); return; }
 

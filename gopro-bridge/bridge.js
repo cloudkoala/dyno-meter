@@ -123,9 +123,26 @@ export function startBridge(opts = {}) {
   let lastReviveAt = 0;         // rate-limits recovery attempts while video is down
   let lastStartAt = 0;          // when ffmpeg last (re)started — used as a warm-up grace
   let liveness = null;          // periodic "is video still flowing?" watchdog
+  let controlBase = null;       // HTTP base of the reachable GoPro (for shutter commands)
 
   // Video is considered flowing if a fragment arrived in the last few seconds.
   const flowing = () => Date.now() - lastFrameAt < 3000;
+
+  // Send a JSON message to every connected client.
+  const broadcast = (obj) => { const s = JSON.stringify(obj); for (const ws of wss.clients) if (ws.readyState === 1) ws.send(s); };
+
+  // Start/stop recording on the GoPro's SD card (independent of the preview
+  // stream). Uses the same reachable base as streaming; reports a cmdresult.
+  async function shutter(on) {
+    if (!controlBase) { broadcast({ type: 'cmdresult', ok: false, message: `GoPro not reachable — can't ${on ? 'start' : 'stop'} recording.` }); return; }
+    try {
+      const r = await fetch(`${controlBase}/gopro/camera/shutter/${on ? 'start' : 'stop'}`, { signal: AbortSignal.timeout(4000) });
+      if (!r.ok) throw new Error(`HTTP ${r.status}`);
+      broadcast({ type: 'cmdresult', ok: true, message: on ? 'GoPro recording started.' : 'GoPro recording stopped.' });
+    } catch (e) {
+      broadcast({ type: 'cmdresult', ok: false, message: `GoPro record ${on ? 'start' : 'stop'} failed (${e.message}).` });
+    }
+  }
 
   // Push a diagnostic to every connected client, and remember it so a client
   // that connects later still learns the current state (set before any client
@@ -183,6 +200,7 @@ export function startBridge(opts = {}) {
     }
 
     if (chosen) {
+      controlBase = chosen.base; // shutter commands go to the same reachable base
       log(`GoPro stream start via ${chosen.label}`);
       if (!streamSeen) setStatus('ok', `GoPro stream requested (${chosen.label}) — waiting for video…`);
       // Keep-alive: the preview stops after a few seconds without periodic pings.
@@ -278,6 +296,7 @@ export function startBridge(opts = {}) {
     lastStartAt = 0;
     lastReviveAt = 0;
     lastStatus = null;
+    controlBase = null;
     log('no viewers — bridge idle');
   }
 
@@ -302,6 +321,13 @@ export function startBridge(opts = {}) {
     // app stayed open) — revive it rather than sending a frozen init segment.
     if (flowing() && initSeg) ws.send(tagged(0, initSeg));
     else reviveStream('viewer connected, no live video'); // starts the pipeline (+ GoPro if enabled)
+    ws.on('message', (data) => {
+      let msg; try { msg = JSON.parse(data.toString()); } catch { return; }
+      if (msg && msg.type === 'cmd') {
+        if (msg.cmd === 'record-start') shutter(true);
+        else if (msg.cmd === 'record-stop') shutter(false);
+      }
+    });
     ws.on('close', () => {
       log(`client disconnected (${wss.clients.size} total)`);
       if (![...wss.clients].some((c) => c.readyState === 1)) goDormant(); // last viewer left

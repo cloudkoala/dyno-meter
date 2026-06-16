@@ -14,6 +14,7 @@ const DEFAULTS = {
   cameraBridgeUrl: 'ws://localhost:8088', // GoPro bridge WebSocket (gopro-bridge/)
   cameraAutoConnect: false,   // auto-connect the camera feed on load
   videoOffsetMs: 300,         // session playback: shift video vs. graph to line them up (ms; +ve = video later)
+  recordOnGoPro: false,       // also trigger recording on the GoPro's SD card while the app records
   // Persistent recording metadata (kept across recordings/reloads).
   testId: '',                 // stays the same across recordings unless changed
   sample: '01',               // auto-increments per recording; resets when testId changes

@@ -125,6 +125,7 @@ export class UI {
     });
     $('setCameraUrl').onchange = () => this.h.onSetting('cameraBridgeUrl', ($('setCameraUrl').value || '').trim());
     $('setCameraAuto').onchange = () => this.h.onSetting('cameraAutoConnect', $('setCameraAuto').checked);
+    $('setRecordOnGoPro').onchange = () => this.h.onSetting('recordOnGoPro', $('setRecordOnGoPro').checked);
     $('setVideoOffset').onchange = () => {
       this._videoOffsetMs = Number($('setVideoOffset').value) || 0;
       this.h.onSetting('videoOffsetMs', this._videoOffsetMs);
@@ -185,6 +186,7 @@ export class UI {
     this._cameraUrl = s.cameraBridgeUrl || 'ws://localhost:8088';
     $('setCameraUrl').value = this._cameraUrl;
     $('setCameraAuto').checked = !!s.cameraAutoConnect;
+    $('setRecordOnGoPro').checked = !!s.recordOnGoPro;
     this._videoOffsetMs = Number(s.videoOffsetMs) || 0;
     $('setVideoOffset').value = String(this._videoOffsetMs);
     if (s.cameraAutoConnect) this._toggleCamera(true, { silent: true });
@@ -499,6 +501,8 @@ export class UI {
   }
 
   _onCameraStatus(s) {
+    // Result of a control command (e.g. start/stop on-camera recording).
+    if (s.state === 'cmdresult') { this.toast(s.message, s.ok ? undefined : true); return; }
     // Diagnostics relayed from the bridge (e.g. "can't reach the GoPro") — surface
     // them so a blank feed isn't a silent mystery. Doesn't change connection state.
     if (s.state === 'bridge') {
@@ -525,6 +529,12 @@ export class UI {
   }
 
   connectCamera() { this._toggleCamera(true); }
+
+  // Tell the bridge to start/stop recording on the GoPro's SD card. Returns true
+  // if the command was sent (camera connected).
+  triggerCameraRecord(on) {
+    return this.camera.sendControl({ type: 'cmd', cmd: on ? 'record-start' : 'record-stop' });
+  }
 
   // "GoPro Camera → Wi-Fi": if we're already on a GoPro access point, skip the
   // Bluetooth setup and just connect the feed. Otherwise run the BLE enable +
