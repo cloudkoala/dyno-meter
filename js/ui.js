@@ -5,7 +5,7 @@
 import { MultiSelect } from './multiselect.js';
 import { asChannels } from './store.js';
 import { CameraFeed } from './camera.js';
-import { enableGoProWifi } from './gopro-ble.js';
+import { enableGoProWifi, GoProRecorder } from './gopro-ble.js';
 
 // Colors for multi-channel session rendering / PNG export (mirrors app.js).
 const CHAN_COLORS = ['#3fb6ff', '#ffb020', '#2ec36a', '#ff5252', '#b06fff', '#ff8f3f'];
@@ -67,6 +67,7 @@ export class UI {
     this.sessionName = null;// name of the session being viewed, if any
     this.liveHeader = { id: 'Live', config: '', material: '' }; // live chart header
     this.camera = new CameraFeed(); // GoPro/webcam live feed + recording
+    this.recorder = new GoProRecorder(); // record-only second GoPro (BLE-triggered)
     this._cameraUrl = 'ws://localhost:8088';
     this._cameraWanted = false; // user has the live feed turned on
     this._cameraSilent = false; // current connect is best-effort (auto-connect): suppress errors
@@ -118,6 +119,7 @@ export class UI {
     // in the top-bar "+" device menu alongside the LineScale/Enforcer options.
     this.camera.attach($('cameraVideo'));
     this.camera.onStatus((s) => this._onCameraStatus(s));
+    this.recorder.onStatus((s) => this._onRecorderStatus(s));
     // Video drives the session cursor + panels while playing (unless the mouse is
     // over the chart, in which case the graph is the master and scrubs the video).
     $('cameraVideo').addEventListener('timeupdate', () => {
@@ -536,6 +538,40 @@ export class UI {
     return this.camera.sendControl({ type: 'cmd', cmd: on ? 'record-start' : 'record-stop' });
   }
 
+  // ---- record-only GoPro (BLE) -------------------------------------------
+  recorderConnected() { return this.recorder.isConnected(); }
+
+  // Start/stop on-camera recording on the record-only GoPro. Returns true if a
+  // command was issued (it was connected).
+  triggerRecorderRecord(on) {
+    if (!this.recorder.isConnected()) return false;
+    this.recorder.record(on).catch((e) => this.toast(e?.message || 'GoPro record command failed', true));
+    return true;
+  }
+
+  // Connect the record-only camera over Bluetooth (persistent connection).
+  async _connectRecorder() {
+    this._goproBleActive = true; // show the pairing note in the BLE picker
+    this.toast('Connecting to record-only GoPro…', 'warn', { sticky: true });
+    try {
+      await this.recorder.connect((msg) => this.toast(msg, 'warn', { sticky: true }));
+      // The 'connected' status handler shows the success toast + updates the menu.
+    } catch (e) {
+      if (e && (e.name === 'NotFoundError' || e.name === 'AbortError')) { this.hideToast(); return; }
+      this.toast(e?.message || "Couldn't connect the record-only GoPro", true);
+    } finally {
+      this._goproBleActive = false;
+    }
+  }
+
+  _onRecorderStatus(s) {
+    if (s.state === 'connected') this.toast(`Record-only GoPro connected${s.name ? ` (${s.name})` : ''}`);
+    else if (s.state === 'reconnecting') this.toast('Record-only GoPro dropped — reconnecting…', 'warn');
+    else if (s.state === 'lost') this.toast('Record-only GoPro disconnected.', true);
+    // 'disconnected' is user-initiated — no toast.
+    this._renderDeviceMenu();
+  }
+
   // "GoPro Camera → Wi-Fi": if we're already on a GoPro access point, skip the
   // Bluetooth setup and just connect the feed. Otherwise run the BLE enable +
   // auto-join flow (Electron), or — in a browser build — connect the bridge and
@@ -826,14 +862,17 @@ export class UI {
       mkAdd('LineScale 3', () => this.h.onConnect()),
       mkAdd('Rock Exotica Enforcer', () => this.h.onConnectEnforcer()),
     );
+    // GoPro Camera twirls open to streaming (Wi-Fi / USB) + a record-only camera.
+    // Streaming options hide once a feed is live; record-only hides once it's added.
+    const camSubs = [];
     if (!this.camera.isLive()) {
-      // GoPro Camera twirls open to Wi-Fi / USB. Both connect the bridge (which
-      // auto-detects USB); the Wi-Fi path adds BLE setup + auto-join when needed.
-      addGroup.append(mkGroup('GoPro Camera', [
-        mkAdd('Wi-Fi', () => this._connectGoProWifi()),
-        mkAdd('USB', () => this._toggleCamera(true)),
-      ]));
+      camSubs.push(mkAdd('Wi-Fi', () => this._connectGoProWifi()));
+      camSubs.push(mkAdd('USB', () => this._toggleCamera(true)));
     }
+    if (!this.recorder.isConnected()) {
+      camSubs.push(mkAdd('Record-only (Bluetooth)', () => this._connectRecorder()));
+    }
+    if (camSubs.length) addGroup.append(mkGroup('GoPro Camera', camSubs));
     return addGroup;
   }
 
@@ -848,7 +887,8 @@ export class UI {
     // for saved-session playback (socket still open) — but not merely when the
     // bridge WebSocket is open with no GoPro (which would falsely show on launch).
     const camOn = this.camera.isLive() || this.camera.isSuspendedLive();
-    const total = n + (camOn ? 1 : 0);
+    const recOn = this.recorder.isConnected();
+    const total = n + (camOn ? 1 : 0) + (recOn ? 1 : 0);
 
     const circle = $('connCircle');
     circle.textContent = total > 0 ? String(total) : '+';
@@ -879,6 +919,7 @@ export class UI {
       };
       for (const d of devices) mkRow(d.label, d.kind, () => this.h.onChannelDisconnect(d.id));
       if (camOn) mkRow('Camera', 'GoPro feed', () => this._toggleCamera());
+      if (recOn) mkRow('GoPro (record-only)', this.recorder.name, () => this.recorder.disconnect());
     }
 
     document.querySelectorAll('.device-setting').forEach((el) => (el.disabled = n === 0));

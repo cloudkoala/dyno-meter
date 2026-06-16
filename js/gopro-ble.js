@@ -22,8 +22,15 @@ const GOPRO_SERVICES = [SVC_CONTROL, SVC_WIFI, 'b5f90090-aa8d-11e3-9046-0002a5d5
 // SSID/password values. Built via RegExp() to keep control bytes out of source.
 const CTRL_BYTES = new RegExp('[\\x00-\\x1f\\x7f]', 'g');
 
+const CHAR_SETTINGS = 'b5f90074-aa8d-11e3-9046-0002a5d5c51b';    // Settings Request (keep-alive)
+
 // TLV command: [length=0x03][command id 0x17 = AP Control][param length 0x01][0x01 = on].
 export const AP_ON_COMMAND = Uint8Array.of(0x03, 0x17, 0x01, 0x01);
+// Shutter (record) command 0x01: param 0x01 = start, 0x00 = stop.
+export const SHUTTER_ON = Uint8Array.of(0x03, 0x01, 0x01, 0x01);
+export const SHUTTER_OFF = Uint8Array.of(0x03, 0x01, 0x01, 0x00);
+// Keep-alive (setting 0x5B = 0x42), sent every ~3s so the camera doesn't sleep + drop BLE.
+export const KEEP_ALIVE = Uint8Array.of(0x03, 0x5b, 0x01, 0x42);
 
 // Decode a BLE string characteristic value (SSID/password). GoPro returns the raw
 // UTF-8 string; trim any trailing control bytes.
@@ -131,5 +138,91 @@ async function connectAndEnable(device, onProgress) {
   } finally {
     // The AP stays on after we drop BLE; disconnect to free the radio.
     try { server.disconnect(); } catch { /* ignore */ }
+  }
+}
+
+// A record-only GoPro: a persistent BLE connection that triggers on-camera (SD)
+// recording on demand. No streaming — used as a second camera alongside the
+// live/streamed one. Keeps the link alive so shutter commands are instant.
+export class GoProRecorder {
+  constructor() {
+    this.device = null;
+    this.server = null;
+    this.cmd = null;       // Command Request characteristic (shutter)
+    this.settings = null;  // Settings Request characteristic (keep-alive)
+    this._statusCbs = [];
+    this._keepAlive = null;
+    this._onDisc = null;
+    this._closing = false;
+    this._reconnectTries = 0;
+  }
+
+  onStatus(cb) { this._statusCbs.push(cb); return this; }
+  _status(s) { for (const cb of this._statusCbs) cb(s); }
+  get name() { return (this.device && this.device.name) || 'GoPro'; }
+  isConnected() { return !!(this.server && this.server.connected && this.cmd); }
+
+  // Pick a GoPro and connect. Throws (incl. user-cancelled chooser).
+  async connect(onProgress = () => {}) {
+    if (typeof navigator === 'undefined' || !navigator.bluetooth) throw new Error('Web Bluetooth is not available here.');
+    onProgress('Select your GoPro…');
+    this.device = await navigator.bluetooth.requestDevice({ filters: [{ namePrefix: 'GoPro' }], optionalServices: GOPRO_SERVICES });
+    this._closing = false;
+    this._onDisc = () => this._handleDrop();
+    this.device.addEventListener('gattserverdisconnected', this._onDisc);
+    await this._open(onProgress);
+  }
+
+  async _open(onProgress = () => {}) {
+    onProgress(`Connecting to ${this.name} over Bluetooth…`);
+    this.server = await step('connect', () => this.device.gatt.connect());
+    const services = await step('discover services', () => getServices(this.server));
+    const find = (uuid) => step(`find ${uuid.slice(0, 8)}`, async () => {
+      for (const svc of services) { try { return await svc.getCharacteristic(uuid); } catch { /* not here */ } }
+      throw new Error('characteristic not found');
+    });
+    this.cmd = await find(CHAR_COMMAND);
+    try { this.settings = await find(CHAR_SETTINGS); } catch { this.settings = null; }
+    this._reconnectTries = 0;
+    clearInterval(this._keepAlive);
+    this._keepAlive = setInterval(() => this._keepAliveTick(), 3000);
+    this._status({ state: 'connected', name: this.name });
+  }
+
+  async _keepAliveTick() {
+    if (!this.isConnected()) return;
+    try { await writeChar(this.settings || this.cmd, KEEP_ALIVE); } catch { /* best-effort */ }
+  }
+
+  // Start (on=true) / stop on-camera recording.
+  async record(on) {
+    if (!this.isConnected()) throw new Error('Record-only GoPro is not connected');
+    await step('shutter', () => writeChar(this.cmd, on ? SHUTTER_ON : SHUTTER_OFF));
+  }
+
+  async _handleDrop() {
+    this.cmd = null; this.settings = null;
+    clearInterval(this._keepAlive); this._keepAlive = null;
+    if (this._closing) return;
+    // Camera slept or went out of range — try to reconnect a few times.
+    if (this._reconnectTries < 5) {
+      this._reconnectTries++;
+      this._status({ state: 'reconnecting', name: this.name });
+      await delay(1500);
+      if (this._closing) return;
+      try { await this._open(); return; } catch { /* fall through to retry/lost */ }
+      if (this._reconnectTries >= 5) this._status({ state: 'lost', name: this.name });
+    } else {
+      this._status({ state: 'lost', name: this.name });
+    }
+  }
+
+  disconnect() {
+    this._closing = true;
+    clearInterval(this._keepAlive); this._keepAlive = null;
+    if (this.device && this._onDisc) { try { this.device.removeEventListener('gattserverdisconnected', this._onDisc); } catch {} }
+    try { this.server && this.server.disconnect(); } catch { /* ignore */ }
+    this.server = null; this.cmd = null; this.settings = null;
+    this._status({ state: 'disconnected', name: this.name });
   }
 }
